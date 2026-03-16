@@ -28,33 +28,36 @@ A chess application that lives in your terminal. Practice tactics, play live gam
 
 ## Install
 
+### From crates.io
+
 ```bash
 cargo install cheshire_chess
+cheshire-chess
 ```
 
-Or build from source:
+### From source
 
 ```bash
 git clone https://github.com/joshjetson/cheshire_chess.git
 cd cheshire_chess
 cargo build --release
+./target/release/cheshire-chess
 ```
 
-### Puzzles
+Requires Rust 1.75 or newer.
 
-Download the Lichess puzzle database for tactics training:
+### Puzzles (optional)
+
+Download the Lichess puzzle database for tactics training (~300MB download, ~1GB uncompressed):
 
 ```bash
 mkdir -p data
 curl -L -o data/lichess_db_puzzle.csv.zst https://database.lichess.org/lichess_db_puzzle.csv.zst
 zstd -d data/lichess_db_puzzle.csv.zst -o data/lichess_puzzles.csv
+rm data/lichess_db_puzzle.csv.zst
 ```
 
-## Usage
-
-```bash
-cheshire-chess
-```
+Place the `data/` directory wherever you run the app from.
 
 ### Controls
 
