@@ -10,7 +10,7 @@ use crate::net::NetClient;
 use crate::protocol::*;
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
 use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
-use crate::tracker::{self, RemoteServer};
+use crate::tracker::RemoteServer;
 
 #[allow(dead_code)]
 pub enum Screen {
@@ -87,9 +87,12 @@ pub struct App {
     pub live_white: Option<u32>,
     pub live_black: Option<u32>,
     pub game_active: bool,
-    // Discovery
+    // Discovery (reserved for future LAN mode)
+    #[allow(dead_code)]
     pub remote_servers: Vec<RemoteServer>,
+    #[allow(dead_code)]
     pub heartbeat_tx: Option<mpsc::Sender<u32>>,
+    #[allow(dead_code)]
     pub public_ip: Option<String>,
     // Audio & Settings
     pub audio: Option<Audio>,
@@ -249,18 +252,16 @@ impl App {
         self.net.is_some() && self.my_id.is_some()
     }
 
-    /// Try to reconnect to local server.
+    /// Try to reconnect to the central server.
     fn try_reconnect(&mut self) {
         self.net = None;
         self.net_rx = None;
         self.my_id = None;
-        crate::server::start_server();
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        match NetClient::connect("127.0.0.1") {
+        match NetClient::connect() {
             Ok((client, rx)) => {
                 self.net = Some(client);
                 self.net_rx = Some(rx);
-                self.message = String::from("Reconnected.");
+                self.message = String::from("Reconnecting...");
             }
             Err(_) => {
                 self.message = String::from("Could not connect. Try again.");
@@ -724,31 +725,19 @@ impl App {
                     self.message = String::from("Move pieces freely. Tab=menu, Enter=select/place.");
                 }
                 2 => {
-                    // Go Online — start embedded server, register with tracker, connect
+                    // Go Online — connect to central game server
                     if self.net.is_some() {
                         self.send_net(ClientMsg::ListRooms);
-                        self.remote_servers = tracker::fetch_servers();
                         self.screen = Screen::RoomBrowser;
-                        self.message = String::from("Browse rooms or create one.");
+                        self.focus = Focus::Panel;
+                        self.update_hint();
                     } else {
-                        crate::server::start_server();
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-
-                        // Get public IP and register with tracker
-                        let ip = tracker::get_public_ip();
-                        self.public_ip = Some(ip.clone());
-                        let name = format!("{}'s server", self.player_name);
-                        self.heartbeat_tx = Some(tracker::start_heartbeat(
-                            ip, crate::protocol::DEFAULT_PORT, name,
-                        ));
-
-                        // Fetch other online servers
-                        self.remote_servers = tracker::fetch_servers();
-
-                        match NetClient::connect("127.0.0.1") {
+                        self.message = String::from("Connecting...");
+                        match NetClient::connect() {
                             Ok((client, rx)) => {
                                 self.net = Some(client);
                                 self.net_rx = Some(rx);
+                                // Welcome message will trigger screen transition
                             }
                             Err(e) => {
                                 self.message = format!("Connection failed: {e}");
@@ -958,47 +947,18 @@ impl App {
     // ── Room Browser ───────────────────────────────────────────────
 
     fn handle_room_browser_key(&mut self, key: KeyEvent) {
-        let total_items = self.room_list.len() + self.remote_servers.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.room_selection > 0 { self.room_selection -= 1; }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if total_items > 0 && self.room_selection < total_items - 1 {
+                if !self.room_list.is_empty() && self.room_selection < self.room_list.len() - 1 {
                     self.room_selection += 1;
                 }
             }
-            KeyCode::Enter | KeyCode::Char('l') => {
-                let local_count = self.room_list.len();
-                if self.room_selection < local_count {
-                    // Join local room
-                    if let Some(room) = self.room_list.get(self.room_selection) {
-                        self.send_net(ClientMsg::JoinRoom { room_id: room.id });
-                    }
-                } else {
-                    // Connect to remote server
-                    let remote_idx = self.room_selection - local_count;
-                    if let Some(server) = self.remote_servers.get(remote_idx).cloned() {
-                        // Disconnect from local, connect to remote
-                        self.net = None;
-                        self.net_rx = None;
-                        self.my_id = None;
-                        match NetClient::connect(&server.host) {
-                            Ok((client, rx)) => {
-                                self.net = Some(client);
-                                self.net_rx = Some(rx);
-                                self.message = format!("Connecting to {}...", server.name);
-                            }
-                            Err(e) => {
-                                self.message = format!("Failed to connect: {e}");
-                                // Reconnect to local
-                                if let Ok((client, rx)) = NetClient::connect("127.0.0.1") {
-                                    self.net = Some(client);
-                                    self.net_rx = Some(rx);
-                                }
-                            }
-                        }
-                    }
+            KeyCode::Enter => {
+                if let Some(room) = self.room_list.get(self.room_selection) {
+                    self.send_net(ClientMsg::JoinRoom { room_id: room.id });
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
@@ -1014,14 +974,12 @@ impl App {
                 if !self.is_connected() {
                     self.try_reconnect();
                 }
-                if self.is_connected() {
+                if !self.is_connected() {
+                    self.try_reconnect();
+                } else {
                     self.send_net(ClientMsg::ListRooms);
+                    self.message = String::from("Refreshed.");
                 }
-                self.remote_servers = tracker::fetch_servers();
-                if let Some(ref ip) = self.public_ip {
-                    self.remote_servers.retain(|s| s.host != *ip);
-                }
-                self.message = String::from("Refreshed.");
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.screen = Screen::Menu;

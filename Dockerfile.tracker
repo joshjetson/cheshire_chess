@@ -1,9 +1,10 @@
 FROM rust:1.87 AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release --bin cheshire-tracker
+RUN cargo build --release --bin cheshire-tracker --bin cheshire-server
 
 FROM debian:bookworm-slim
 COPY --from=builder /app/target/release/cheshire-tracker /usr/local/bin/
-EXPOSE 7879
-CMD ["cheshire-tracker"]
+COPY --from=builder /app/target/release/cheshire-server /usr/local/bin/
+EXPOSE 7879 7880
+CMD ["sh", "-c", "cheshire-server & cheshire-tracker"]

@@ -509,20 +509,28 @@ fn position_to_fen(pos: &Position) -> String {
 
 type State = Arc<Mutex<ServerState>>;
 
-/// Start the server on a background thread. Returns immediately.
-/// The server listens on 0.0.0.0:DEFAULT_PORT.
+/// Start the server on a background thread on DEFAULT_PORT. Returns immediately.
 pub fn start_server() {
-    std::thread::spawn(|| {
+    start_server_on(DEFAULT_PORT);
+}
+
+/// Start the server on a background thread on CENTRAL_SERVER_PORT. Returns immediately.
+pub fn start_central_server() {
+    start_server_on(crate::protocol::CENTRAL_SERVER_PORT);
+}
+
+pub fn start_server_on(port: u16) {
+    std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("Failed to create server runtime");
-        rt.block_on(run_server());
+        rt.block_on(run_server(port));
     });
 }
 
-async fn run_server() {
-    let addr = format!("0.0.0.0:{DEFAULT_PORT}");
+async fn run_server(port: u16) {
+    let addr = format!("0.0.0.0:{port}");
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(_) => return, // Port in use — another instance is hosting

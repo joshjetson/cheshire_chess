@@ -563,30 +563,17 @@ fn draw_right_results(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_right_room_browser(frame: &mut Frame, app: &App, area: Rect) {
-    let mut items: Vec<ListItem> = Vec::new();
-    let mut idx = 0usize;
-
-    if app.room_list.is_empty() && app.remote_servers.is_empty() {
-        items.push(ListItem::new("  No rooms. [n] to create.").style(Style::default().fg(Color::Rgb(160, 140, 180))));
-    }
-    if !app.room_list.is_empty() {
-        items.push(ListItem::new("── Local ──").style(Style::default().fg(Color::Rgb(120, 100, 140))));
-    }
-    for room in &app.room_list {
-        let games = if room.active_games > 0 { format!(" [{}g]", room.active_games) } else { String::new() };
-        items.push(ListItem::new(format!("{}{} ({}p){games}", prefix(idx == app.room_selection), room.name, room.player_count))
-            .style(list_style(idx == app.room_selection)));
-        idx += 1;
-    }
-    if !app.remote_servers.is_empty() {
-        items.push(ListItem::new("── Online ──").style(Style::default().fg(Color::Rgb(120, 100, 140))));
-    }
-    for server in &app.remote_servers {
-        items.push(ListItem::new(format!("{}{} ({}p)", prefix(idx == app.room_selection), server.name, server.players))
-            .style(list_style(idx == app.room_selection)));
-        idx += 1;
-    }
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("[n]ew [r]efresh Enter=join"));
+    let items: Vec<ListItem> = if app.room_list.is_empty() {
+        vec![ListItem::new("  No rooms yet. Press [n] to create one.").style(Style::default().fg(Color::Rgb(160, 140, 180)))]
+    } else {
+        app.room_list.iter().enumerate().map(|(i, room)| {
+            let games = if room.active_games > 0 { format!(" [{}g]", room.active_games) } else { String::new() };
+            ListItem::new(format!("{}{} ({} players, {} tables){games}",
+                prefix(i == app.room_selection), room.name, room.player_count, room.table_count))
+                .style(list_style(i == app.room_selection))
+        }).collect()
+    };
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Game Rooms"));
     frame.render_widget(list, area);
 }
 

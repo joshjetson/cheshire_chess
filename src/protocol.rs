@@ -115,3 +115,4 @@ pub enum ChatKind {
 }
 
 pub const DEFAULT_PORT: u16 = 7878;
+pub const CENTRAL_SERVER_PORT: u16 = 7880;

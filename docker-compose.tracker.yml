@@ -7,3 +7,4 @@ services:
     restart: unless-stopped
     ports:
       - "7879:7879"
+      - "7880:7880"

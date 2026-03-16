@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{mpsc, Arc};
@@ -6,7 +8,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 const TRACKER_HOST: &str = "chess.virtualraremedia.com";
+#[allow(dead_code)]
 const TRACKER_PORT: u16 = 443;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
