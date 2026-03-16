@@ -8,6 +8,7 @@ use crate::canvas::{CanvasMode, CanvasState, CustomPieces, PIECE_TYPES, SHAPE_PA
 use crate::net::NetClient;
 use crate::protocol::*;
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
+use crate::tracker::{self, RemoteServer};
 
 pub enum Screen {
     Menu,
@@ -71,6 +72,10 @@ pub struct App {
     pub live_white: Option<u32>,
     pub live_black: Option<u32>,
     pub game_active: bool,
+    // Discovery
+    pub remote_servers: Vec<RemoteServer>,
+    pub heartbeat_tx: Option<mpsc::Sender<u32>>,
+    pub public_ip: Option<String>,
 }
 
 const MENU_ITEMS: &[&str] = &[
@@ -122,6 +127,9 @@ impl App {
             live_white: None,
             live_black: None,
             game_active: false,
+            remote_servers: Vec::new(),
+            heartbeat_tx: None,
+            public_ip: None,
         }
     }
 
@@ -341,16 +349,27 @@ impl App {
                     self.message = String::from("hjkl/arrows to move cursor. Esc for menu.");
                 }
                 2 => {
-                    // Go Online — start embedded server, then connect
+                    // Go Online — start embedded server, register with tracker, connect
                     if self.net.is_some() {
                         self.send_net(ClientMsg::ListRooms);
+                        self.remote_servers = tracker::fetch_servers();
                         self.screen = Screen::RoomBrowser;
                         self.message = String::from("Browse rooms or create one.");
                     } else {
-                        // Start server (silently fails if port already taken — another player is hosting)
                         crate::server::start_server();
-                        // Give it a moment to bind
                         std::thread::sleep(std::time::Duration::from_millis(100));
+
+                        // Get public IP and register with tracker
+                        let ip = tracker::get_public_ip();
+                        self.public_ip = Some(ip.clone());
+                        let name = format!("{}'s server", self.player_name);
+                        self.heartbeat_tx = Some(tracker::start_heartbeat(
+                            ip, crate::protocol::DEFAULT_PORT, name,
+                        ));
+
+                        // Fetch other online servers
+                        self.remote_servers = tracker::fetch_servers();
+
                         match NetClient::connect("127.0.0.1") {
                             Ok((client, rx)) => {
                                 self.net = Some(client);
@@ -591,28 +610,61 @@ impl App {
     // ── Room Browser ───────────────────────────────────────────────
 
     fn handle_room_browser_key(&mut self, key: KeyEvent) {
+        let total_items = self.room_list.len() + self.remote_servers.len();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.room_selection > 0 { self.room_selection -= 1; }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if !self.room_list.is_empty() && self.room_selection < self.room_list.len() - 1 {
+                if total_items > 0 && self.room_selection < total_items - 1 {
                     self.room_selection += 1;
                 }
             }
             KeyCode::Enter | KeyCode::Char('l') => {
-                if let Some(room) = self.room_list.get(self.room_selection) {
-                    self.send_net(ClientMsg::JoinRoom { room_id: room.id });
+                let local_count = self.room_list.len();
+                if self.room_selection < local_count {
+                    // Join local room
+                    if let Some(room) = self.room_list.get(self.room_selection) {
+                        self.send_net(ClientMsg::JoinRoom { room_id: room.id });
+                    }
+                } else {
+                    // Connect to remote server
+                    let remote_idx = self.room_selection - local_count;
+                    if let Some(server) = self.remote_servers.get(remote_idx).cloned() {
+                        // Disconnect from local, connect to remote
+                        self.net = None;
+                        self.net_rx = None;
+                        self.my_id = None;
+                        match NetClient::connect(&server.host) {
+                            Ok((client, rx)) => {
+                                self.net = Some(client);
+                                self.net_rx = Some(rx);
+                                self.message = format!("Connecting to {}...", server.name);
+                            }
+                            Err(e) => {
+                                self.message = format!("Failed to connect: {e}");
+                                // Reconnect to local
+                                if let Ok((client, rx)) = NetClient::connect("127.0.0.1") {
+                                    self.net = Some(client);
+                                    self.net_rx = Some(rx);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                // Create new room with player's name
                 let name = format!("{}'s room", self.player_name);
                 self.send_net(ClientMsg::CreateRoom { name });
             }
             KeyCode::Char('r') => {
                 self.send_net(ClientMsg::ListRooms);
-                self.message = String::from("Refreshing...");
+                self.remote_servers = tracker::fetch_servers();
+                // Filter out our own server from remote list
+                if let Some(ref ip) = self.public_ip {
+                    self.remote_servers.retain(|s| s.host != *ip);
+                }
+                self.message = String::from("Refreshed.");
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.screen = Screen::Menu;

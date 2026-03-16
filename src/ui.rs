@@ -595,26 +595,59 @@ fn draw_room_browser(frame: &mut Frame, app: &App) {
     let chunks = standard_layout(frame);
     draw_title(frame, chunks[0]);
 
-    let items: Vec<ListItem> = if app.room_list.is_empty() {
-        vec![ListItem::new("  No rooms yet. Press [n] to create one.").style(
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut idx = 0usize;
+
+    // Local rooms
+    if app.room_list.is_empty() && app.remote_servers.is_empty() {
+        items.push(ListItem::new("  No rooms yet. Press [n] to create one.").style(
             Style::default().fg(Color::Rgb(160, 140, 180)),
-        )]
-    } else {
-        app.room_list.iter().enumerate().map(|(i, room)| {
-            let style = if i == app.room_selection {
-                Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(200, 180, 220))
-            };
-            let prefix = if i == app.room_selection { " > " } else { "   " };
-            let games = if room.active_games > 0 { format!(" [{} game(s)]", room.active_games) } else { String::new() };
-            ListItem::new(format!("{prefix}{} ({} players, {} tables){games}", room.name, room.player_count, room.table_count)).style(style)
-        }).collect()
-    };
+        ));
+    }
+
+    if !app.room_list.is_empty() {
+        items.push(ListItem::new("── Local ──").style(
+            Style::default().fg(Color::Rgb(120, 100, 140)),
+        ));
+    }
+
+    for room in &app.room_list {
+        let style = if idx == app.room_selection {
+            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(200, 180, 220))
+        };
+        let prefix = if idx == app.room_selection { " > " } else { "   " };
+        let games = if room.active_games > 0 { format!(" [{} game(s)]", room.active_games) } else { String::new() };
+        items.push(ListItem::new(format!(
+            "{prefix}{} ({} players, {} tables){games}", room.name, room.player_count, room.table_count
+        )).style(style));
+        idx += 1;
+    }
+
+    // Remote servers from tracker
+    if !app.remote_servers.is_empty() {
+        items.push(ListItem::new("── Online Players ──").style(
+            Style::default().fg(Color::Rgb(120, 100, 140)),
+        ));
+    }
+
+    for server in &app.remote_servers {
+        let style = if idx == app.room_selection {
+            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(170, 200, 180))
+        };
+        let prefix = if idx == app.room_selection { " > " } else { "   " };
+        items.push(ListItem::new(format!(
+            "{prefix}{} ({} players) — {}", server.name, server.players, server.host
+        )).style(style));
+        idx += 1;
+    }
 
     let list = List::new(items).block(
         Block::default().borders(Borders::ALL)
-            .title(format!("Game Rooms — [n]ew room, [r]efresh, Enter=join, Esc=back")),
+            .title("[n]ew room, [r]efresh, Enter=join, Esc=back"),
     );
     frame.render_widget(list, chunks[1]);
     draw_status(frame, chunks[2], &app.message);
