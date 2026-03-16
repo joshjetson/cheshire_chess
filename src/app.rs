@@ -294,6 +294,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     fn am_playing(&self) -> bool {
         self.game_active && (self.live_white == self.my_id || self.live_black == self.my_id)
     }

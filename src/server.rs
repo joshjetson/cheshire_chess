@@ -531,7 +531,7 @@ async fn run_server() {
     let state: State = Arc::new(Mutex::new(ServerState::new()));
 
     loop {
-        let (stream, peer) = match listener.accept().await {
+        let (stream, _peer) = match listener.accept().await {
             Ok(s) => s,
             Err(_) => continue,
         };
