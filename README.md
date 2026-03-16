@@ -61,14 +61,20 @@ Place the `data/` directory wherever you run the app from.
 
 ### Controls
 
+The board is always visible on the left. Everything else happens in the right pane.
+
 | Key | Action |
 |---|---|
-| `hjkl` / arrows | Navigate menus and board |
-| `Enter` | Select / place piece / submit move |
-| `Tab` | Toggle chat (online) / shape picker (canvas) |
-| `Esc` | Go back |
+| `hjkl` / arrows | Move cursor on the board |
+| `Enter` | Select piece / place piece / submit move |
+| `Tab` | Cycle menu items / toggle chat |
+| `Space` | Activate selected menu item |
+| `1-5` | Quick-jump to menu items |
+| `Esc` | Deselect / go back |
 | `Ctrl+C` | Quit from anywhere |
-| `q` | Quit / back |
+| `q` | Quit |
+
+On the main screen you can pick up and move pieces freely — no rules enforced. Select a piece with Enter, move cursor to destination, Enter again to place it.
 
 ## What It Does
 
@@ -76,7 +82,10 @@ Place the `data/` directory wherever you run the app from.
 - **Live multiplayer** — create game rooms, play opponents, spectate, and chat
 - **Peer-to-peer** — every client is also a server. No central game server required
 - **Internet discovery** — players find each other automatically through a tracker service
+- **Synthesized audio** — all sounds generated mathematically at runtime, fully customizable
+- **Sound designer** — tweak waveform, ADSR envelope, LFO, and filter per sound event
 - **Custom pieces** — draw your own piece art with a built-in canvas editor
+- **Settings** — player name, sound parameters, and piece canvas all in one place
 - **Runs anywhere** — pure terminal UI, works in any terminal emulator, over SSH, on any OS
 
 ## Features
@@ -111,9 +120,19 @@ Select **Go Online** from the menu. Your app starts hosting automatically — no
 └────────────────────────┘
 ```
 
+### Settings
+
+Access from the main menu. Includes:
+
+- **Player Name** — set your display name for online play
+- **Sound Settings** — per-event synth controls: waveform (sine/triangle/saw/square), ADSR envelope, LFO rate and depth, low-pass filter cutoff. Preview and save.
+- **Piece Canvas** — draw custom pieces (see below)
+
+All settings persist to `data/settings.json`.
+
 ### Custom Pieces
 
-Draw your own chess pieces using Unicode block characters. Select **Piece Canvas** from the menu:
+Draw your own chess pieces using Unicode block characters. Open from **Settings > Piece Canvas**:
 
 1. Pick a piece type (King, Queen, Rook, Bishop, Knight, Pawn)
 2. Choose from 200+ shapes — block elements, box drawing, geometric shapes, symbols
@@ -150,6 +169,8 @@ src/
 ├── ui.rs          — ratatui rendering for all screens
 ├── puzzle.rs      — Lichess CSV indexing, on-demand loading
 ├── canvas.rs      — piece editor, shape palette, save/load
+├── audio.rs       — synthesized sound engine, ADSR, LFO, filter
+├── settings.rs    — persistent settings, synth params, save/load
 ├── server.rs      — embedded WebSocket game server
 ├── net.rs         — client networking, channel bridge
 ├── protocol.rs    — JSON message types (client <-> server)

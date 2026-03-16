@@ -67,19 +67,51 @@ fn piece_name(piece_type: usize) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    // Canvas and shape picker are full-screen (no board)
     match app.screen {
-        Screen::Menu => draw_menu(frame, app),
-        Screen::ThemePicker => draw_theme_picker(frame, app),
-        Screen::Analysis | Screen::Puzzle => draw_board_screen(frame, app),
-        Screen::Results => draw_results(frame, app),
-        Screen::Canvas => draw_canvas(frame, app),
-        Screen::RoomBrowser => draw_room_browser(frame, app),
-        Screen::RoomLobby => draw_room_lobby(frame, app),
-        Screen::LiveGame => draw_live_game(frame, app),
-        Screen::Settings => draw_settings(frame, app),
-        Screen::SoundSettings => draw_sound_settings(frame, app),
-        Screen::SoundEventEdit => draw_sound_event_edit(frame, app),
-        Screen::NameEdit => draw_name_edit(frame, app),
+        Screen::Canvas => { draw_canvas(frame, app); return; }
+        _ => {}
+    }
+
+    // Everything else: board on left, context on right
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+        .split(frame.area());
+
+    draw_title(frame, outer[0]);
+    draw_status(frame, outer[2], &app.message);
+
+    let board_width = 2 + 2 + 8 * SQ_WIDTH; // borders + rank label + squares
+    let main = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(board_width), Constraint::Min(0)])
+        .split(outer[1]);
+
+    // Left: always the board
+    let board_widget = BoardWidget {
+        board: &app.board,
+        cursor: app.cursor,
+        custom_pieces: &app.custom_pieces,
+        selected_sq: app.selected_sq,
+        highlights: &app.highlights,
+    };
+    frame.render_widget(board_widget, main[0]);
+
+    // Right: context-dependent pane
+    match app.screen {
+        Screen::Menu | Screen::Analysis => draw_right_menu(frame, app, main[1]),
+        Screen::ThemePicker => draw_right_theme_picker(frame, app, main[1]),
+        Screen::Puzzle => draw_right_puzzle(frame, app, main[1]),
+        Screen::Results => draw_right_results(frame, app, main[1]),
+        Screen::RoomBrowser => draw_right_room_browser(frame, app, main[1]),
+        Screen::RoomLobby => draw_right_room_lobby(frame, app, main[1]),
+        Screen::LiveGame => draw_right_live_game(frame, app, main[1]),
+        Screen::Settings => draw_right_settings(frame, app, main[1]),
+        Screen::SoundSettings => draw_right_sound_settings(frame, app, main[1]),
+        Screen::SoundEventEdit => draw_right_sound_event_edit(frame, app, main[1]),
+        Screen::NameEdit => draw_right_name_edit(frame, app, main[1]),
+        Screen::Canvas => {} // handled above
     }
 }
 
@@ -107,150 +139,6 @@ fn standard_layout(frame: &mut Frame) -> Vec<Rect> {
         ])
         .split(frame.area())
         .to_vec()
-}
-
-fn draw_menu(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let items: Vec<ListItem> = app
-        .menu_items()
-        .iter()
-        .enumerate()
-        .map(|(i, &item)| {
-            let style = if i == app.menu_selection {
-                Style::default()
-                    .fg(Color::Rgb(255, 200, 255))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(200, 180, 220))
-            };
-            let prefix = if i == app.menu_selection { " > " } else { "   " };
-            ListItem::new(format!("{prefix}{item}")).style(style)
-        })
-        .collect();
-
-    let puzzle_count = app.total_puzzles();
-    let title = if puzzle_count > 0 {
-        format!("Menu ({puzzle_count} puzzles indexed)")
-    } else {
-        String::from("Menu")
-    };
-
-    let menu = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(title),
-    );
-    frame.render_widget(menu, chunks[1]);
-
-    draw_status(frame, chunks[2], &app.message);
-}
-
-fn draw_theme_picker(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let items: Vec<ListItem> = app
-        .theme_counts()
-        .iter()
-        .enumerate()
-        .map(|(i, (_tag, name, count))| {
-            let style = if i == app.theme_selection {
-                Style::default()
-                    .fg(Color::Rgb(255, 200, 255))
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(200, 180, 220))
-            };
-            let prefix = if i == app.theme_selection { " > " } else { "   " };
-            ListItem::new(format!("{prefix}{name} ({count})")).style(style)
-        })
-        .collect();
-
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Select Tactic Theme"),
-    );
-    frame.render_widget(list, chunks[1]);
-
-    draw_status(frame, chunks[2], &app.message);
-}
-
-fn draw_results(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let text = format!(
-        "Session Complete!\n\nScore: {} / {}\n\nPress Enter to return to menu.",
-        app.score_correct, app.score_total
-    );
-    let results = Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Results"),
-    );
-    frame.render_widget(results, chunks[1]);
-
-    draw_status(frame, chunks[2], &app.message);
-}
-
-fn draw_board_screen(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    // Board needs: 2 border + 2 rank label + 8*7 squares = 60 wide
-    //              2 border + 8*3 squares + 1 file label row = 27 tall
-    let board_width = 2 + 2 + 8 * SQ_WIDTH; // borders + rank label col + squares
-    let board_area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(board_width),
-            Constraint::Min(0),
-        ])
-        .split(chunks[1]);
-
-    let board_widget = BoardWidget {
-        board: &app.board,
-        cursor: app.cursor,
-        custom_pieces: &app.custom_pieces,
-        selected_sq: app.selected_sq,
-        highlights: &app.highlights,
-    };
-    frame.render_widget(board_widget, board_area[0]);
-
-    // Info panel
-    let cursor_file = (b'a' + app.cursor % 8) as char;
-    let cursor_rank = app.cursor / 8 + 1;
-    let piece_info = match app.board.piece_at(app.cursor) {
-        Some((pt, _color)) => piece_name(pt).to_string(),
-        None => String::from("-"),
-    };
-
-    let mut info_lines = format!("  {cursor_file}{cursor_rank}  {piece_info}\n");
-
-    if let Screen::Puzzle = app.screen {
-        if let Some(puzzle) = app.puzzle_queue.get(app.puzzle_pos) {
-            info_lines.push_str(&format!("\n  Puzzle: {}", puzzle.id));
-            info_lines.push_str(&format!("\n  Rating: {}", puzzle.rating));
-            info_lines.push_str(&format!(
-                "\n  Themes: {}",
-                puzzle.themes.join(", ")
-            ));
-            let solution = puzzle.solution_moves();
-            info_lines.push_str(&format!("\n  Moves:  {}", solution.len()));
-        }
-    }
-
-    let info = Paragraph::new(info_lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Info"),
-    );
-    frame.render_widget(info, board_area[1]);
-
-    draw_status(frame, chunks[2], &app.message);
 }
 
 const SELECTED_SQ: Color = Color::Rgb(120, 200, 120);  // green for selected piece
@@ -563,172 +451,158 @@ fn draw_canvas_shape_picker(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-// ── Online Screens ─────────────────────────────────────────────────
+// ── Right Pane Functions ───────────────────────────────────────────
 
-fn draw_room_browser(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
+fn list_style(selected: bool) -> Style {
+    if selected {
+        Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Rgb(200, 180, 220))
+    }
+}
 
+fn prefix(selected: bool) -> &'static str {
+    if selected { " > " } else { "   " }
+}
+
+fn draw_right_menu(frame: &mut Frame, app: &App, area: Rect) {
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(6)])
+        .split(area);
+
+    let items: Vec<ListItem> = app.menu_items().iter().enumerate().map(|(i, &item)| {
+        ListItem::new(format!("{}{item}", prefix(i == app.menu_selection)))
+            .style(list_style(i == app.menu_selection))
+    }).collect();
+
+    let puzzle_count = app.total_puzzles();
+    let title = if puzzle_count > 0 { format!("Menu ({puzzle_count} puzzles)") } else { String::from("Menu") };
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    frame.render_widget(list, split[0]);
+
+    // Cursor info
+    let cursor_file = (b'a' + app.cursor % 8) as char;
+    let cursor_rank = app.cursor / 8 + 1;
+    let piece_info = match app.board.piece_at(app.cursor) {
+        Some((pt, _)) => piece_name(pt).to_string(),
+        None => String::from("-"),
+    };
+    let info = Paragraph::new(format!("  {cursor_file}{cursor_rank}  {piece_info}"))
+        .block(Block::default().borders(Borders::ALL).title("Board"));
+    frame.render_widget(info, split[1]);
+}
+
+fn draw_right_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app.theme_counts().iter().enumerate().map(|(i, (_tag, name, count))| {
+        ListItem::new(format!("{}{name} ({count})", prefix(i == app.theme_selection)))
+            .style(list_style(i == app.theme_selection))
+    }).collect();
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Select Tactic Theme"));
+    frame.render_widget(list, area);
+}
+
+fn draw_right_puzzle(frame: &mut Frame, app: &App, area: Rect) {
+    let cursor_file = (b'a' + app.cursor % 8) as char;
+    let cursor_rank = app.cursor / 8 + 1;
+    let piece_info = match app.board.piece_at(app.cursor) {
+        Some((pt, _)) => piece_name(pt).to_string(),
+        None => String::from("-"),
+    };
+    let mut lines = format!("  {cursor_file}{cursor_rank}  {piece_info}\n");
+    if let Some(puzzle) = app.puzzle_queue.get(app.puzzle_pos) {
+        lines.push_str(&format!("\n  Puzzle: {}", puzzle.id));
+        lines.push_str(&format!("\n  Rating: {}", puzzle.rating));
+        lines.push_str(&format!("\n  Themes: {}", puzzle.themes.join(", ")));
+        lines.push_str(&format!("\n  Moves:  {}", puzzle.solution_moves().len()));
+        lines.push_str(&format!("\n\n  {}/{}", app.puzzle_pos + 1, app.puzzle_queue.len()));
+        lines.push_str(&format!("\n  Score: {}/{}", app.score_correct, app.score_total));
+    }
+    let info = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Puzzle"));
+    frame.render_widget(info, area);
+}
+
+fn draw_right_results(frame: &mut Frame, app: &App, area: Rect) {
+    let text = format!(
+        "\n  Session Complete!\n\n  Score: {} / {}\n\n  Press Enter to return.",
+        app.score_correct, app.score_total
+    );
+    let para = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Results"));
+    frame.render_widget(para, area);
+}
+
+fn draw_right_room_browser(frame: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut idx = 0usize;
 
-    // Local rooms
     if app.room_list.is_empty() && app.remote_servers.is_empty() {
-        items.push(ListItem::new("  No rooms yet. Press [n] to create one.").style(
-            Style::default().fg(Color::Rgb(160, 140, 180)),
-        ));
+        items.push(ListItem::new("  No rooms. [n] to create.").style(Style::default().fg(Color::Rgb(160, 140, 180))));
     }
-
     if !app.room_list.is_empty() {
-        items.push(ListItem::new("── Local ──").style(
-            Style::default().fg(Color::Rgb(120, 100, 140)),
-        ));
+        items.push(ListItem::new("── Local ──").style(Style::default().fg(Color::Rgb(120, 100, 140))));
     }
-
     for room in &app.room_list {
-        let style = if idx == app.room_selection {
-            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Rgb(200, 180, 220))
-        };
-        let prefix = if idx == app.room_selection { " > " } else { "   " };
-        let games = if room.active_games > 0 { format!(" [{} game(s)]", room.active_games) } else { String::new() };
-        items.push(ListItem::new(format!(
-            "{prefix}{} ({} players, {} tables){games}", room.name, room.player_count, room.table_count
-        )).style(style));
+        let games = if room.active_games > 0 { format!(" [{}g]", room.active_games) } else { String::new() };
+        items.push(ListItem::new(format!("{}{} ({}p){games}", prefix(idx == app.room_selection), room.name, room.player_count))
+            .style(list_style(idx == app.room_selection)));
         idx += 1;
     }
-
-    // Remote servers from tracker
     if !app.remote_servers.is_empty() {
-        items.push(ListItem::new("── Online Players ──").style(
-            Style::default().fg(Color::Rgb(120, 100, 140)),
-        ));
+        items.push(ListItem::new("── Online ──").style(Style::default().fg(Color::Rgb(120, 100, 140))));
     }
-
     for server in &app.remote_servers {
-        let style = if idx == app.room_selection {
-            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Rgb(170, 200, 180))
-        };
-        let prefix = if idx == app.room_selection { " > " } else { "   " };
-        items.push(ListItem::new(format!(
-            "{prefix}{} ({} players) — {}", server.name, server.players, server.host
-        )).style(style));
+        items.push(ListItem::new(format!("{}{} ({}p)", prefix(idx == app.room_selection), server.name, server.players))
+            .style(list_style(idx == app.room_selection)));
         idx += 1;
     }
-
-    let list = List::new(items).block(
-        Block::default().borders(Borders::ALL)
-            .title("[n]ew room, [r]efresh, Enter=join, Esc=back"),
-    );
-    frame.render_widget(list, chunks[1]);
-    draw_status(frame, chunks[2], &app.message);
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title("[n]ew [r]efresh Enter=join"));
+    frame.render_widget(list, area);
 }
 
-fn draw_room_lobby(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
-
-    // Left: tables + players
-    let left = Layout::default()
+fn draw_right_room_lobby(frame: &mut Frame, app: &App, area: Rect) {
+    let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(cols[0]);
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(30), Constraint::Percentage(30)])
+        .split(area);
 
+    // Tables
     let room_name = app.current_room.as_ref().map(|r| r.name.as_str()).unwrap_or("Room");
-
-    // Tables list
     let table_items: Vec<ListItem> = if app.tables.is_empty() {
-        vec![ListItem::new("  No tables. Press [t] to create one.").style(
-            Style::default().fg(Color::Rgb(160, 140, 180))
-        )]
+        vec![ListItem::new("  No tables. [t] to create.").style(Style::default().fg(Color::Rgb(160, 140, 180)))]
     } else {
         app.tables.iter().enumerate().map(|(i, t)| {
-            let style = if i == app.table_selection {
-                Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Rgb(200, 180, 220))
-            };
-            let prefix = if i == app.table_selection { " > " } else { "   " };
-            let white = t.white.as_ref().map(|p| p.name.as_str()).unwrap_or("(open)");
-            let black = t.black.as_ref().map(|p| p.name.as_str()).unwrap_or("(open)");
-            let status = if t.has_game { "playing" } else if t.white.is_some() || t.black.is_some() { "waiting" } else { "empty" };
-            let spectators = if t.spectator_count > 0 { format!(" +{} watching", t.spectator_count) } else { String::new() };
-            ListItem::new(format!("{prefix}Table {}: {white} vs {black} [{status}]{spectators}", t.id)).style(style)
+            let w = t.white.as_ref().map(|p| p.name.as_str()).unwrap_or("?");
+            let b = t.black.as_ref().map(|p| p.name.as_str()).unwrap_or("?");
+            let st = if t.has_game { "playing" } else { "waiting" };
+            ListItem::new(format!("{}{w} v {b} [{st}]", prefix(i == app.table_selection)))
+                .style(list_style(i == app.table_selection))
         }).collect()
     };
+    frame.render_widget(List::new(table_items).block(Block::default().borders(Borders::ALL).title(format!("{room_name} [t]able"))), split[0]);
 
-    let tables = List::new(table_items).block(
-        Block::default().borders(Borders::ALL)
-            .title(format!("{room_name} — [t]able, Enter=join")),
-    );
-    frame.render_widget(tables, left[0]);
-
-    // Players list
+    // Players
     let player_items: Vec<ListItem> = app.room_players.iter().map(|p| {
-        let status = match p.status {
-            crate::protocol::PlayerStatus::Idle => "",
-            crate::protocol::PlayerStatus::Playing => " [playing]",
-            crate::protocol::PlayerStatus::Spectating => " [watching]",
-        };
         let me = if Some(p.id) == app.my_id { " (you)" } else { "" };
-        ListItem::new(format!("   {}{me}{status}", p.name))
-            .style(Style::default().fg(Color::Rgb(180, 160, 200)))
+        ListItem::new(format!("   {}{me}", p.name)).style(Style::default().fg(Color::Rgb(180, 160, 200)))
     }).collect();
+    frame.render_widget(List::new(player_items).block(Block::default().borders(Borders::ALL).title("Players")), split[1]);
 
-    let plist = List::new(player_items).block(
-        Block::default().borders(Borders::ALL)
-            .title(format!("{} players", app.room_players.len())),
-    );
-    frame.render_widget(plist, left[1]);
-
-    // Right: chat
-    draw_chat(frame, app, cols[1]);
-
-    draw_status(frame, chunks[2], &app.message);
+    // Chat
+    draw_chat_pane(frame, app, split[2]);
 }
 
-fn draw_live_game(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let board_width = 2 + 2 + 8 * SQ_WIDTH;
-    let game_area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(board_width), Constraint::Min(0)])
-        .split(chunks[1]);
-
-    let board_widget = BoardWidget {
-        board: &app.board,
-        cursor: app.cursor,
-        custom_pieces: &app.custom_pieces,
-        selected_sq: app.selected_sq,
-        highlights: &app.highlights,
-    };
-    frame.render_widget(board_widget, game_area[0]);
-
-    // Right side: chat
-    draw_chat(frame, app, game_area[1]);
-
-    draw_status(frame, chunks[2], &app.message);
+fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
+    draw_chat_pane(frame, app, area);
 }
 
-fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
-    let chat_layout = Layout::default()
+fn draw_chat_pane(frame: &mut Frame, app: &App, area: Rect) {
+    let chat_split = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(3)])
         .split(area);
 
-    // Messages
     let msg_count = app.chat.messages.len();
-    let visible = chat_layout[0].height.saturating_sub(2) as usize;
+    let visible = chat_split[0].height.saturating_sub(2) as usize;
     let skip = if msg_count > visible { msg_count - visible } else { 0 };
 
     let items: Vec<ListItem> = app.chat.messages.iter().skip(skip).map(|(sender, body, kind)| {
@@ -737,143 +611,58 @@ fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
             crate::protocol::ChatKind::Player => Style::default().fg(Color::Rgb(200, 180, 220)),
             crate::protocol::ChatKind::Spectator => Style::default().fg(Color::Rgb(150, 170, 200)),
         };
-        let text = if sender.is_empty() {
-            format!("  {body}")
-        } else {
-            format!("  {sender}: {body}")
-        };
+        let text = if sender.is_empty() { format!("  {body}") } else { format!("  {sender}: {body}") };
         ListItem::new(text).style(style)
     }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Chat")), chat_split[0]);
 
-    let chat = List::new(items).block(
-        Block::default().borders(Borders::ALL).title("Chat"),
-    );
-    frame.render_widget(chat, chat_layout[0]);
-
-    // Input
-    let input_style = if app.chat.typing {
-        Style::default().fg(Color::White)
-    } else {
-        Style::default().fg(Color::Rgb(100, 90, 110))
-    };
-    let input_text = if app.chat.typing {
-        format!("> {}_", app.chat.input)
-    } else {
-        String::from("  Tab to chat...")
-    };
-    let input = Paragraph::new(input_text)
-        .style(input_style)
-        .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(input, chat_layout[1]);
+    let input_text = if app.chat.typing { format!("> {}_", app.chat.input) } else { String::from("  Tab to chat...") };
+    let input_style = if app.chat.typing { Style::default().fg(Color::White) } else { Style::default().fg(Color::Rgb(100, 90, 110)) };
+    frame.render_widget(Paragraph::new(input_text).style(input_style).block(Block::default().borders(Borders::ALL)), chat_split[1]);
 }
 
-// ── Settings Screens ───────────────────────────────────────────────
-
-fn draw_settings(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
+fn draw_right_settings(frame: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = SETTINGS_ITEMS.iter().enumerate().map(|(i, &item)| {
-        let style = if i == app.settings_selection {
-            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Rgb(200, 180, 220))
-        };
-        let prefix = if i == app.settings_selection { " > " } else { "   " };
         let detail = match i {
             0 => format!("  [{}]", app.settings.player_name),
-            1 => {
-                let state = if app.settings.sound.enabled { "on" } else { "off" };
-                format!("  [{}]", state)
-            }
+            1 => format!("  [{}]", if app.settings.sound.enabled { "on" } else { "off" }),
             _ => String::new(),
         };
-        ListItem::new(format!("{prefix}{item}{detail}")).style(style)
+        ListItem::new(format!("{}{item}{detail}", prefix(i == app.settings_selection)))
+            .style(list_style(i == app.settings_selection))
     }).collect();
-
-    let list = List::new(items).block(
-        Block::default().borders(Borders::ALL).title("Settings"),
-    );
-    frame.render_widget(list, chunks[1]);
-    draw_status(frame, chunks[2], &app.message);
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Settings")), area);
 }
 
-fn draw_name_edit(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
-    let text = format!(
-        "\n  Player Name:\n\n  > {}_\n\n  Enter to save, Esc to cancel",
-        app.name_input
-    );
-    let para = Paragraph::new(text).block(
-        Block::default().borders(Borders::ALL).title("Edit Name"),
-    );
-    frame.render_widget(para, chunks[1]);
-    draw_status(frame, chunks[2], &app.message);
+fn draw_right_name_edit(frame: &mut Frame, app: &App, area: Rect) {
+    let text = format!("\n  Name:\n\n  > {}_\n\n  Enter=save Esc=cancel", app.name_input);
+    frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Edit Name")), area);
 }
 
-fn draw_sound_settings(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
+fn draw_right_sound_settings(frame: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = SOUND_EVENT_NAMES.iter().enumerate().map(|(i, &name)| {
-        let style = if i == app.sound_event_selection {
-            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Rgb(200, 180, 220))
-        };
-        let prefix = if i == app.sound_event_selection { " > " } else { "   " };
-        let params = app.get_event_params(i);
-        ListItem::new(format!("{prefix}{name}  ({} {}Hz {}ms)",
-            params.waveform.name(), params.frequency as u32, params.duration_ms
-        )).style(style)
+        let p = app.get_event_params(i);
+        ListItem::new(format!("{}{name} ({} {}Hz)", prefix(i == app.sound_event_selection), p.waveform.name(), p.frequency as u32))
+            .style(list_style(i == app.sound_event_selection))
     }).collect();
-
     let mute = if app.settings.sound.enabled { "" } else { " [MUTED]" };
-    let list = List::new(items).block(
-        Block::default().borders(Borders::ALL)
-            .title(format!("Sound Events{mute} — Enter=edit, [m]ute toggle, Esc=back")),
-    );
-    frame.render_widget(list, chunks[1]);
-    draw_status(frame, chunks[2], &app.message);
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(format!("Sound{mute} [m]ute Enter=edit"))), area);
 }
 
-fn draw_sound_event_edit(frame: &mut Frame, app: &App) {
-    let chunks = standard_layout(frame);
-    draw_title(frame, chunks[0]);
-
+fn draw_right_sound_event_edit(frame: &mut Frame, app: &App, area: Rect) {
     let params = app.get_event_params(app.sound_event_selection);
     let event_name = SOUND_EVENT_NAMES[app.sound_event_selection];
-
-    let values: Vec<String> = vec![
-        params.waveform.name().to_string(),
-        format!("{:.0} Hz", params.frequency),
-        format!("{:.3} s", params.attack),
-        format!("{:.3} s", params.decay),
-        format!("{:.2}", params.sustain),
-        format!("{:.3} s", params.release),
-        format!("{:.2}", params.volume),
-        format!("{:.1} Hz", params.lfo_rate),
-        format!("{:.2}", params.lfo_depth),
-        format!("{} ms", params.duration_ms),
+    let values = [
+        params.waveform.name().to_string(), format!("{:.0}Hz", params.frequency),
+        format!("{:.3}s", params.attack), format!("{:.3}s", params.decay),
+        format!("{:.2}", params.sustain), format!("{:.3}s", params.release),
+        format!("{:.2}", params.volume), format!("{:.1}Hz", params.lfo_rate),
+        format!("{:.2}", params.lfo_depth), format!("{}ms", params.duration_ms),
     ];
-
     let items: Vec<ListItem> = SYNTH_PARAM_NAMES.iter().enumerate().map(|(i, &name)| {
-        let style = if i == app.sound_param_selection {
-            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::Rgb(200, 180, 220))
-        };
-        let prefix = if i == app.sound_param_selection { " > " } else { "   " };
-        let arrow = if i == app.sound_param_selection { "  <  >  " } else { "        " };
-        ListItem::new(format!("{prefix}{name:<12} {:<12}{arrow}", values[i])).style(style)
+        let sel = i == app.sound_param_selection;
+        let arrow = if sel { " < > " } else { "     " };
+        ListItem::new(format!("{}{name:<10} {:<8}{arrow}", prefix(sel), values[i])).style(list_style(sel))
     }).collect();
-
-    let list = List::new(items).block(
-        Block::default().borders(Borders::ALL)
-            .title(format!("{event_name} — left/right to adjust, [p]review, [s]ave, Esc=back")),
-    );
-    frame.render_widget(list, chunks[1]);
-    draw_status(frame, chunks[2], &app.message);
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(format!("{event_name} [p]review [s]ave"))), area);
 }

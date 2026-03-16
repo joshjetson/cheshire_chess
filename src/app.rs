@@ -12,6 +12,7 @@ use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
 use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 use crate::tracker::{self, RemoteServer};
 
+#[allow(dead_code)]
 pub enum Screen {
     Menu,
     ThemePicker,
@@ -107,7 +108,7 @@ impl App {
         let settings = Settings::load(data_dir);
         let player_name = settings.player_name.clone();
         Self {
-            screen: Screen::Menu,
+            screen: Screen::Menu, // default: board + menu on right
             board: Position::start(),
             cursor: 28,
             running: true,
@@ -362,16 +363,87 @@ impl App {
     }
 
     fn handle_menu_key(&mut self, key: KeyEvent) {
+        // Arrow keys move the board cursor, Tab navigates menu
+        match key.code {
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
+                self.move_cursor(key);
+                return;
+            }
+            KeyCode::Enter => {
+                // If a piece is selected, try to move it (free play)
+                if self.selected_sq.is_some() {
+                    self.handle_free_move();
+                    return;
+                }
+                // If cursor is on a piece, select it
+                if self.board.piece_at(self.cursor).is_some() {
+                    self.select_piece(self.cursor);
+                    return;
+                }
+            }
+            _ => {}
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => { self.running = false; }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.menu_selection > 0 { self.menu_selection -= 1; }
+            KeyCode::Tab => {
+                // Cycle menu selection
+                self.menu_selection = (self.menu_selection + 1) % MENU_ITEMS.len();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if self.menu_selection < MENU_ITEMS.len() - 1 { self.menu_selection += 1; }
+            KeyCode::Char('1') => { self.menu_select(0); }
+            KeyCode::Char('2') => { self.menu_select(1); }
+            KeyCode::Char('3') => { self.menu_select(2); }
+            KeyCode::Char('4') => { self.menu_select(3); }
+            KeyCode::Char('5') => { self.menu_select(4); }
+            KeyCode::Char(' ') => {
+                // Space to activate selected menu item
+                let sel = self.menu_selection;
+                self.menu_select(sel);
             }
-            KeyCode::Enter | KeyCode::Char('l') => match self.menu_selection {
-                0 => {
+            KeyCode::Esc => {
+                // Deselect piece
+                self.selected_sq = None;
+                self.highlights.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_free_move(&mut self) {
+        let to = self.cursor;
+        if let Some(from) = self.selected_sq {
+            if from == to {
+                self.selected_sq = None;
+                self.highlights.clear();
+                return;
+            }
+            // Move piece freely (no rule validation)
+            if let Some((pt, color)) = self.board.piece_at(from) {
+                let from_bit = 1u64 << from;
+                let to_bit = 1u64 << to;
+                let ci = if color == crate::board::Color::White { crate::board::WHITE } else { crate::board::BLACK };
+                // Remove from origin
+                self.board.pieces[pt] &= !from_bit;
+                self.board.colors[ci] &= !from_bit;
+                // Remove any piece at destination
+                for p in 0..6 {
+                    self.board.pieces[p] &= !to_bit;
+                }
+                self.board.colors[0] &= !to_bit;
+                self.board.colors[1] &= !to_bit;
+                // Place at destination
+                self.board.pieces[pt] |= to_bit;
+                self.board.colors[ci] |= to_bit;
+                self.play_sound(|a, s| a.play_move(s));
+            }
+            self.selected_sq = None;
+            self.highlights.clear();
+        }
+    }
+
+    fn menu_select(&mut self, idx: usize) {
+        match idx {
+            0 => {
                     if self.puzzle_index.is_none() {
                         self.message = String::from("No puzzles loaded. Place lichess_puzzles.csv in data/");
                     } else {
@@ -381,9 +453,10 @@ impl App {
                     }
                 }
                 1 => {
-                    self.screen = Screen::Analysis;
                     self.board = Position::start();
-                    self.message = String::from("hjkl/arrows to move cursor. Esc for menu.");
+                    self.selected_sq = None;
+                    self.highlights.clear();
+                    self.message = String::from("Move pieces freely. Tab=menu, Enter=select/place.");
                 }
                 2 => {
                     // Go Online — start embedded server, register with tracker, connect
@@ -425,8 +498,6 @@ impl App {
                 }
                 4 => { self.running = false; }
                 _ => {}
-            },
-            _ => {}
         }
     }
 
