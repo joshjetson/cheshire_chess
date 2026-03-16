@@ -115,6 +115,25 @@ fn play_buf(handle: &OutputStreamHandle, buf: Vec<f32>) {
 #[cfg(feature = "audio")]
 impl Audio {
     pub fn new() -> Option<Self> {
+        // Suppress ALSA/audio errors from corrupting the TUI
+        // Redirect stderr temporarily during audio init
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::io::AsRawFd;
+            unsafe {
+                let devnull = libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_WRONLY);
+                if devnull >= 0 {
+                    let saved = libc::dup(2);
+                    libc::dup2(devnull, 2);
+                    let result = OutputStream::try_default();
+                    libc::dup2(saved, 2);
+                    libc::close(devnull);
+                    libc::close(saved);
+                    let (stream, handle) = result.ok()?;
+                    return Some(Self { _stream: stream, handle });
+                }
+            }
+        }
         let (stream, handle) = OutputStream::try_default().ok()?;
         Some(Self { _stream: stream, handle })
     }

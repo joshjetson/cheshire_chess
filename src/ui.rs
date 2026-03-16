@@ -19,33 +19,33 @@ const TITLE_COLOR: Color = Color::Rgb(180, 120, 220);
 const SQ_WIDTH: u16 = 7;
 const SQ_HEIGHT: u16 = 3;
 
-// Outlined piece art — 7 chars wide × 3 rows.
-// Uses box-drawing and line characters to draw piece profiles/outlines.
+// Default piece art — matches the custom pieces from custom_pieces.txt.
+// These are the built-in defaults so installed copies look identical.
 fn piece_art(piece_type: usize) -> [&'static str; 3] {
     match piece_type {
-        board::KING   => ["  ╺+╸  ",
-                          " ╭─┼─╮ ",
-                          " ╰───╯ "],
+        board::KING   => ["       ",
+                          " ▕▟✚▙▏ ",
+                          "  ▀▀▀  "],
 
-        board::QUEEN  => [" ╺╲│╱╸ ",
-                          "  ╰▽╯  ",
-                          " ╰───╯ "],
+        board::QUEEN  => ["       ",
+                          " ▕▟✠▙▏ ",
+                          "  ◥■◤  "],
 
-        board::ROOK   => [" ┌┐ ┌┐ ",
-                          " │ ▐▌ │ ",
-                          " └───┘ "],
+        board::ROOK   => ["       ",
+                          " ▕▟▆▙▏ ",
+                          "  ▀▀▀  "],
 
-        board::BISHOP => ["   ╱╲  ",
-                          "  ╱◌╲  ",
-                          " ╰───╯ "],
+        board::BISHOP => ["   ▲   ",
+                          "  ▐▀▌  ",
+                          "       "],
 
-        board::KNIGHT => ["  ╱▔▔╲ ",
-                          " ▕█▎ │ ",
-                          " ╰───╯ "],
+        board::KNIGHT => [" ▂▅▅▅▃▃",
+                          "▕▣▞ ▚▚▚",
+                          " ▀   ▚▚"],
 
-        board::PAWN   => ["  ╭─╮  ",
-                          "  ╰─╯  ",
-                          " ╰───╯ "],
+        board::PAWN   => ["   ⭘   ",
+                          "  ▜█▛  ",
+                          "       "],
 
         _ =>             ["       ",
                           "       ",
@@ -525,10 +525,19 @@ fn draw_right_menu(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_right_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app.theme_counts().iter().enumerate().map(|(i, (_tag, name, count))| {
-        ListItem::new(format!("{}{name} ({count})", prefix(i == app.theme_selection)))
-            .style(list_style(i == app.theme_selection))
-    }).collect();
+    let theme_counts = app.theme_counts();
+    let items: Vec<ListItem> = if !theme_counts.is_empty() {
+        theme_counts.iter().enumerate().map(|(i, (_tag, name, count))| {
+            ListItem::new(format!("{}{name} ({count})", prefix(i == app.theme_selection)))
+                .style(list_style(i == app.theme_selection))
+        }).collect()
+    } else {
+        // No local index — show theme names without counts (server will provide puzzles)
+        crate::puzzle::TACTIC_THEMES.iter().enumerate().map(|(i, &(_tag, name))| {
+            ListItem::new(format!("{}{name}", prefix(i == app.theme_selection)))
+                .style(list_style(i == app.theme_selection))
+        }).collect()
+    };
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Select Tactic Theme"));
     frame.render_widget(list, area);
 }
