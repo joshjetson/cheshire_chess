@@ -34,8 +34,8 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 fn connect_tracker() -> Option<rustls::StreamOwned<rustls::ClientConnection, TcpStream>> {
     let addr = format!("{TRACKER_HOST}:{TRACKER_PORT}");
     let resolved = addr.to_socket_addrs().ok()?.next()?;
-    let tcp = TcpStream::connect_timeout(&resolved, Duration::from_secs(3)).ok()?;
-    tcp.set_read_timeout(Some(Duration::from_secs(3))).ok();
+    let tcp = TcpStream::connect_timeout(&resolved, Duration::from_secs(5)).ok()?;
+    tcp.set_read_timeout(Some(Duration::from_secs(10))).ok();
 
     let config = tls_config();
     let server_name = TRACKER_HOST.to_string().try_into().ok()?;
@@ -113,6 +113,56 @@ pub fn get_public_ip() -> String {
         }
     }
     "127.0.0.1".to_string()
+}
+
+/// Fetch puzzles from the server. Blocking.
+pub fn fetch_puzzles(
+    client_id: &str,
+    theme: &str,
+    max_rating: u16,
+    limit: usize,
+    offset: usize,
+) -> Vec<crate::puzzle::Puzzle> {
+    let mut stream = match connect_tracker() {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let path = format!(
+        "/puzzles?theme={theme}&max_rating={max_rating}&offset={offset}&limit={limit}"
+    );
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {TRACKER_HOST}\r\nX-Cheshire-ID: {client_id}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return Vec::new();
+    }
+
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or("[]");
+    serde_json::from_str(body).unwrap_or_default()
+}
+
+/// Fetch theme list and counts from the server. Blocking.
+pub fn fetch_themes(client_id: &str) -> Vec<(String, String, usize)> {
+    let mut stream = match connect_tracker() {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    let request = format!(
+        "GET /themes HTTP/1.1\r\nHost: {TRACKER_HOST}\r\nX-Cheshire-ID: {client_id}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return Vec::new();
+    }
+
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+
+    let body = response.split("\r\n\r\n").nth(1).unwrap_or("[]");
+    serde_json::from_str(body).unwrap_or_default()
 }
 
 /// Start a background heartbeat thread that re-registers every 30 seconds.

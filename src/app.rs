@@ -10,7 +10,8 @@ use crate::net::NetClient;
 use crate::protocol::*;
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
 use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
-use crate::tracker::RemoteServer;
+use crate::identity;
+use crate::tracker::{self, RemoteServer};
 
 #[allow(dead_code)]
 pub enum Screen {
@@ -102,6 +103,7 @@ pub struct App {
     pub sound_param_selection: usize,
     pub name_input: String,
     pub room_name_input: String,
+    pub client_id: String,
 }
 
 const MENU_ITEMS: &[&str] = &[
@@ -164,6 +166,7 @@ impl App {
             sound_param_selection: 0,
             name_input: String::new(),
             room_name_input: String::new(),
+            client_id: identity::get_or_create_client_id(data_dir),
         }
     }
 
@@ -734,13 +737,10 @@ impl App {
     fn menu_select(&mut self, idx: usize) {
         match idx {
             0 => {
-                    if self.puzzle_index.is_none() {
-                        self.message = String::from("No puzzles loaded. Place lichess_puzzles.csv in data/");
-                    } else {
-                        self.screen = Screen::ThemePicker;
-                        self.theme_selection = 0;
-                        self.message = String::from("Pick a tactic theme");
-                    }
+                    self.screen = Screen::ThemePicker;
+                    self.theme_selection = 0;
+                    self.focus = Focus::Panel;
+                    self.message = String::from("Pick a tactic theme");
                 }
                 1 => {
                     self.board = Position::start();
@@ -789,22 +789,25 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char('l') => {
                 let (theme_tag, theme_name) = TACTIC_THEMES[self.theme_selection];
-                if let Some(ref index) = self.puzzle_index {
-                    match index.load_theme(theme_tag, Some(2000), PUZZLE_BATCH_SIZE) {
-                        Ok(puzzles) => {
-                            if puzzles.is_empty() {
-                                self.message = format!("No puzzles found for '{theme_name}'");
-                            } else {
-                                self.puzzle_queue = puzzles;
-                                self.puzzle_pos = 0;
-                                self.score_correct = 0;
-                                self.score_total = 0;
-                                self.load_current_puzzle();
-                                self.screen = Screen::Puzzle;
-                            }
-                        }
-                        Err(e) => { self.message = format!("Error loading puzzles: {e}"); }
-                    }
+
+                // Try local index first, fall back to server
+                let puzzles = if let Some(ref index) = self.puzzle_index {
+                    index.load_theme(theme_tag, Some(2000), PUZZLE_BATCH_SIZE).unwrap_or_default()
+                } else {
+                    self.message = String::from("Fetching puzzles from server...");
+                    tracker::fetch_puzzles(&self.client_id, theme_tag, 2000, PUZZLE_BATCH_SIZE, 0)
+                };
+
+                if puzzles.is_empty() {
+                    self.message = format!("No puzzles found for '{theme_name}'");
+                } else {
+                    self.puzzle_queue = puzzles;
+                    self.puzzle_pos = 0;
+                    self.score_correct = 0;
+                    self.score_total = 0;
+                    self.load_current_puzzle();
+                    self.screen = Screen::Puzzle;
+                    self.focus = Focus::Board;
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => {
