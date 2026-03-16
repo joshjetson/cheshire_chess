@@ -1,13 +1,13 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 const TRACKER_HOST: &str = "chess.virtualraremedia.com";
-const TRACKER_PORT: u16 = 7879;
+const TRACKER_PORT: u16 = 443;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemoteServer {
@@ -17,10 +17,26 @@ pub struct RemoteServer {
     pub players: u32,
 }
 
-fn connect_tracker() -> Option<TcpStream> {
+fn tls_config() -> Arc<rustls::ClientConfig> {
+    let root_store = rustls::RootCertStore::from_iter(
+        webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
+    );
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Arc::new(config)
+}
+
+fn connect_tracker() -> Option<rustls::StreamOwned<rustls::ClientConnection, TcpStream>> {
     let addr = format!("{TRACKER_HOST}:{TRACKER_PORT}");
     let resolved = addr.to_socket_addrs().ok()?.next()?;
-    TcpStream::connect_timeout(&resolved, Duration::from_secs(3)).ok()
+    let tcp = TcpStream::connect_timeout(&resolved, Duration::from_secs(3)).ok()?;
+    tcp.set_read_timeout(Some(Duration::from_secs(3))).ok();
+
+    let config = tls_config();
+    let server_name = TRACKER_HOST.to_string().try_into().ok()?;
+    let conn = rustls::ClientConnection::new(config, server_name).ok()?;
+    Some(rustls::StreamOwned::new(conn, tcp))
 }
 
 /// Fetch the server list from the tracker. Blocking.
@@ -29,7 +45,6 @@ pub fn fetch_servers() -> Vec<RemoteServer> {
         Some(s) => s,
         None => return Vec::new(),
     };
-    stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
 
     let request = format!(
         "GET /servers HTTP/1.1\r\nHost: {TRACKER_HOST}\r\nConnection: close\r\n\r\n"
@@ -66,23 +81,27 @@ pub fn register(host: &str, port: u16, name: &str, players: u32) {
     let _ = stream.write_all(request.as_bytes());
 }
 
-/// Get this machine's public IP by asking the tracker what it sees.
-/// Falls back to hostname.
+/// Get this machine's public IP.
 pub fn get_public_ip() -> String {
-    // Simple: ask an external service for our public IP
-    let addrs = format!("api.ipify.org:80").to_socket_addrs();
+    let addrs = "api.ipify.org:443".to_socket_addrs();
     if let Ok(mut resolved) = addrs {
         if let Some(addr) = resolved.next() {
-            if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
-                stream.set_read_timeout(Some(Duration::from_secs(3))).ok();
-                let req = "GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n";
-                if stream.write_all(req.as_bytes()).is_ok() {
-                    let mut resp = String::new();
-                    let _ = stream.read_to_string(&mut resp);
-                    if let Some(body) = resp.split("\r\n\r\n").nth(1) {
-                        let ip = body.trim().to_string();
-                        if !ip.is_empty() {
-                            return ip;
+            if let Ok(tcp) = TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
+                tcp.set_read_timeout(Some(Duration::from_secs(3))).ok();
+                let config = tls_config();
+                if let Ok(server_name) = "api.ipify.org".to_string().try_into() {
+                    if let Ok(conn) = rustls::ClientConnection::new(config, server_name) {
+                        let mut stream = rustls::StreamOwned::new(conn, tcp);
+                        let req = "GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n";
+                        if stream.write_all(req.as_bytes()).is_ok() {
+                            let mut resp = String::new();
+                            let _ = stream.read_to_string(&mut resp);
+                            if let Some(body) = resp.split("\r\n\r\n").nth(1) {
+                                let ip = body.trim().to_string();
+                                if !ip.is_empty() {
+                                    return ip;
+                                }
+                            }
                         }
                     }
                 }
