@@ -1,0 +1,9 @@
+services:
+  cheshire-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile.tracker
+    container_name: cheshire-tracker
+    restart: unless-stopped
+    ports:
+      - "7879:7879"
