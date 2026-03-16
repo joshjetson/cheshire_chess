@@ -346,7 +346,14 @@ impl App {
                     self.board = pos;
                 }
                 self.screen = Screen::LiveGame;
-                self.message = String::from("At the table. Waiting for game...");
+                self.focus = Focus::Board;
+                self.game_active = false;
+                let has_opponent = table.white.is_some() && table.black.is_some();
+                if has_opponent {
+                    self.message = String::from("Game starting...");
+                } else {
+                    self.message = String::from("Waiting for opponent to join...");
+                }
             }
             ServerMsg::GameStarted { table_id, white, black, fen } => {
                 self.live_white = Some(white);
@@ -359,18 +366,20 @@ impl App {
                 self.highlights.clear();
                 self.cursor = 28;
                 if self.current_table != Some(table_id) {
-                    // We're watching from the lobby
                     return;
                 }
                 self.screen = Screen::LiveGame;
+                self.focus = Focus::Board;
+                self.play_sound(|a, s| a.play_login(s));
+
                 let my_color = if Some(white) == self.my_id {
-                    "White"
+                    "White — your move!"
                 } else if Some(black) == self.my_id {
-                    "Black"
+                    "Black — waiting for White"
                 } else {
-                    "Spectator"
+                    "Spectating"
                 };
-                self.message = format!("Game started! You are {my_color}.");
+                self.message = format!("Game started! {my_color}");
             }
             ServerMsg::MoveMade { table_id, uci: _, fen } => {
                 if self.current_table == Some(table_id) {
@@ -385,23 +394,32 @@ impl App {
                     }
                     self.selected_sq = None;
                     self.highlights.clear();
+                    self.focus = Focus::Board;
+
                     if self.is_my_turn() {
-                        self.message = String::from("Your move!");
+                        let check = if self.board.in_check(self.board.side_to_move) { " You're in check!" } else { "" };
+                        self.message = format!("Your move!{check}");
                     } else {
-                        self.message = String::from("Opponent's turn...");
+                        self.message = String::from("Waiting for opponent...");
                     }
                 }
             }
             ServerMsg::GameOver { table_id, reason, winner } => {
                 if self.current_table == Some(table_id) {
+                    let is_player = self.live_white == self.my_id || self.live_black == self.my_id;
                     let result = match winner {
                         Some(id) if Some(id) == self.my_id => "You win!",
-                        Some(_) => "You lose.",
+                        Some(_) if is_player => "You lose.",
+                        Some(_) => "Game over.",
                         None => "Draw.",
                     };
                     self.play_sound(|a, s| a.play_checkmate(s));
-                    self.message = format!("{reason} — {result} Press Esc to return.");
                     self.game_active = false;
+                    if is_player {
+                        self.message = format!("{reason} — {result} r=rematch Esc=leave");
+                    } else {
+                        self.message = format!("{reason} — {result} Esc=leave");
+                    }
                 }
             }
             ServerMsg::MainBoardUpdate { mode: _, fen } => {
@@ -564,7 +582,13 @@ impl App {
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 if let Screen::LiveGame = self.screen {
-                    self.send_net(ClientMsg::Resign);
+                    if self.game_active {
+                        self.send_net(ClientMsg::Resign);
+                    } else {
+                        // Game over — request rematch (swaps colors)
+                        self.send_net(ClientMsg::Rematch);
+                        self.message = String::from("Rematch requested...");
+                    }
                 }
             }
             _ => {}

@@ -360,6 +360,37 @@ impl ServerState {
                     }
                 }
             }
+            ClientMsg::Rematch => {
+                if let Some((room_id, table_id)) = self.player_location(pid) {
+                    let should_start = if let Some(room) = self.rooms.get(&room_id) {
+                        if let Some(table) = room.tables.get(&table_id) {
+                            !table.game_active && table.white.is_some() && table.black.is_some()
+                        } else { false }
+                    } else { false };
+
+                    if should_start {
+                        // Swap colors for the rematch
+                        let (white, black) = if let Some(room) = self.rooms.get_mut(&room_id) {
+                            if let Some(table) = room.tables.get_mut(&table_id) {
+                                let old_white = table.white;
+                                table.white = table.black;
+                                table.black = old_white;
+                                table.game_active = true;
+                                table.position = Position::start();
+                                (table.white.unwrap(), table.black.unwrap())
+                            } else { return; }
+                        } else { return; };
+
+                        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string();
+                        self.broadcast_room(room_id, ServerMsg::GameStarted {
+                            table_id, white, black, fen,
+                        }, None);
+                        let wname = self.player_name(white);
+                        let bname = self.player_name(black);
+                        self.system_chat(room_id, format!("Rematch! {wname} (W) vs {bname} (B)"));
+                    }
+                }
+            }
             ClientMsg::MainBoardMove { uci } => {
                 // Moderator moves on main board (tutorial mode)
                 let room_id = match self.players.get(&pid).and_then(|p| p.room_id) {

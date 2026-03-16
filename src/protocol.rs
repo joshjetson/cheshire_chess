@@ -19,6 +19,7 @@ pub enum ClientMsg {
     // Moves (applies to whichever table you're at)
     MakeMove { uci: String },
     Resign,
+    Rematch,
 
     // Main board (moderator only)
     SetMainBoardMode { mode: BoardMode },

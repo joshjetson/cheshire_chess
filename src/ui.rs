@@ -610,7 +610,56 @@ fn draw_right_room_lobby(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
-    draw_chat_pane(frame, app, area);
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .split(area);
+
+    // Game info panel
+    let my_id = app.my_id;
+    let is_white = app.live_white == my_id;
+    let is_black = app.live_black == my_id;
+    let is_spectator = !is_white && !is_black;
+
+    let my_role = if is_white { "White" } else if is_black { "Black" } else { "Spectating" };
+    let turn = match app.board.side_to_move {
+        crate::board::Color::White => "White to move",
+        crate::board::Color::Black => "Black to move",
+    };
+    let your_turn = app.game_active && ((is_white && app.board.side_to_move == crate::board::Color::White)
+        || (is_black && app.board.side_to_move == crate::board::Color::Black));
+
+    let status = if !app.game_active {
+        "Game over"
+    } else if your_turn {
+        "YOUR MOVE"
+    } else if is_spectator {
+        turn
+    } else {
+        "Waiting..."
+    };
+
+    let in_check = app.game_active && app.board.in_check(app.board.side_to_move);
+    let check_str = if in_check { " CHECK!" } else { "" };
+
+    let info_text = format!(
+        "\n  You: {my_role}\n  {turn}{check_str}\n\n  {status}\n\n  Tab=chat r=resign Esc=leave"
+    );
+
+    let info_style = if your_turn {
+        Style::default().fg(Color::Rgb(255, 220, 150))
+    } else {
+        Style::default().fg(Color::Rgb(200, 180, 220))
+    };
+
+    frame.render_widget(
+        Paragraph::new(info_text).style(info_style)
+            .block(Block::default().borders(Borders::ALL).title("Game")),
+        split[0],
+    );
+
+    // Chat below
+    draw_chat_pane(frame, app, split[1]);
 }
 
 fn draw_chat_pane(frame: &mut Frame, app: &App, area: Rect) {

@@ -4,7 +4,16 @@ COPY . .
 RUN cargo build --release --no-default-features --bin cheshire-tracker --bin cheshire-server
 
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y curl zstd ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Download and decompress Lichess puzzle database
+RUN mkdir -p /data && \
+    curl -L -o /tmp/puzzles.csv.zst https://database.lichess.org/lichess_db_puzzle.csv.zst && \
+    zstd -d /tmp/puzzles.csv.zst -o /data/lichess_puzzles.csv && \
+    rm /tmp/puzzles.csv.zst
+
 COPY --from=builder /app/target/release/cheshire-tracker /usr/local/bin/
 COPY --from=builder /app/target/release/cheshire-server /usr/local/bin/
 EXPOSE 7879 7880
+ENV PUZZLE_CSV=/data/lichess_puzzles.csv
 CMD ["sh", "-c", "cheshire-server & cheshire-tracker"]

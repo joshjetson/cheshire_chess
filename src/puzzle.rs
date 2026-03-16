@@ -3,8 +3,10 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 /// A chess puzzle loaded on demand.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Puzzle {
     pub id: String,
     pub fen: String,
@@ -164,6 +166,49 @@ impl PuzzleIndex {
 
             if let Some(puzzle) = Puzzle::from_csv_line(line_buf.trim_end()) {
                 if max_rating.map_or(true, |max| puzzle.rating <= max) {
+                    puzzles.push(puzzle);
+                }
+            }
+        }
+
+        Ok(puzzles)
+    }
+
+    /// Load puzzles with offset (for pagination from the server).
+    #[allow(dead_code)]
+    pub fn load_theme_with_offset(
+        &self,
+        theme: &str,
+        max_rating: Option<u16>,
+        limit: usize,
+        offset: usize,
+    ) -> io::Result<Vec<Puzzle>> {
+        let offsets = match self.theme_offsets.get(theme) {
+            Some(o) => o,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut file = File::open(&self.path)?;
+        let mut puzzles = Vec::with_capacity(limit.min(offsets.len()));
+        let mut line_buf = String::new();
+        let mut skipped = 0usize;
+
+        for &off in offsets {
+            if puzzles.len() >= limit {
+                break;
+            }
+
+            file.seek(SeekFrom::Start(off))?;
+            line_buf.clear();
+            let mut reader = BufReader::new(&file);
+            reader.read_line(&mut line_buf)?;
+
+            if let Some(puzzle) = Puzzle::from_csv_line(line_buf.trim_end()) {
+                if max_rating.map_or(true, |max| puzzle.rating <= max) {
+                    if skipped < offset {
+                        skipped += 1;
+                        continue;
+                    }
                     puzzles.push(puzzle);
                 }
             }
