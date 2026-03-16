@@ -84,20 +84,20 @@ Place the `data/` directory wherever you run the app from.
 
 ### Controls
 
-The board is always visible on the left. Everything else happens in the right pane.
+The screen is split: board on the left, context panel on the right. **Tab** switches which side has focus. The status bar always shows available controls.
 
 | Key | Action |
 |---|---|
-| `hjkl` / arrows | Move cursor on the board |
-| `Enter` | Select piece / place piece / submit move |
-| `Tab` | Cycle menu items / toggle chat |
-| `Space` | Activate selected menu item |
-| `1-5` | Quick-jump to menu items |
-| `Esc` | Deselect / go back |
+| `Tab` | Switch focus between board and panel |
+| `hjkl` / arrows | Navigate within the focused pane |
+| `Enter` | Select / activate (always) |
+| `Esc` | Deselect / go back (always) |
 | `Ctrl+C` | Quit from anywhere |
-| `q` | Quit |
+| `q` | Quit (from main menu) |
 
-On the main screen you can pick up and move pieces freely — no rules enforced. Select a piece with Enter, move cursor to destination, Enter again to place it.
+**Board focused** — arrow keys move the cursor, Enter selects a piece then places it. On the main screen, pieces move freely (no rules). In puzzles and live games, moves are validated.
+
+**Panel focused** — arrow keys navigate menu items/lists, Enter activates the selection.
 
 ## What It Does
 

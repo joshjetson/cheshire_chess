@@ -118,6 +118,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         custom_pieces: &app.custom_pieces,
         selected_sq: app.selected_sq,
         highlights: &app.highlights,
+        focused: app.focus == crate::app::Focus::Board,
     };
     frame.render_widget(board_widget, main[0]);
 
@@ -128,6 +129,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Puzzle => draw_right_puzzle(frame, app, main[1]),
         Screen::Results => draw_right_results(frame, app, main[1]),
         Screen::RoomBrowser => draw_right_room_browser(frame, app, main[1]),
+        Screen::RoomNameInput => draw_right_room_name_input(frame, app, main[1]),
         Screen::RoomLobby => draw_right_room_lobby(frame, app, main[1]),
         Screen::LiveGame => draw_right_live_game(frame, app, main[1]),
         Screen::Settings => draw_right_settings(frame, app, main[1]),
@@ -173,11 +175,17 @@ struct BoardWidget<'a> {
     custom_pieces: &'a crate::canvas::CustomPieces,
     selected_sq: Option<u8>,
     highlights: &'a [u8],
+    focused: bool,
 }
 
 impl Widget for BoardWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::default().borders(Borders::ALL);
+        let border_style = if self.focused {
+            Style::default().fg(Color::Rgb(200, 170, 230))
+        } else {
+            Style::default().fg(Color::Rgb(80, 60, 100))
+        };
+        let block = Block::default().borders(Borders::ALL).border_style(border_style);
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -699,4 +707,9 @@ fn draw_right_sound_event_edit(frame: &mut Frame, app: &App, area: Rect) {
         ListItem::new(format!("{}{name:<10} {:<8}{arrow}", prefix(sel), values[i])).style(list_style(sel))
     }).collect();
     frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(format!("{event_name} [p]review [s]ave"))), area);
+}
+
+fn draw_right_room_name_input(frame: &mut Frame, app: &App, area: Rect) {
+    let text = format!("\n  Room Name:\n\n  > {}_\n\n  Enter=create Esc=cancel", app.room_name_input);
+    frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("New Room")), area);
 }

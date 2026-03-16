@@ -27,6 +27,7 @@ pub enum Screen {
     SoundSettings,
     SoundEventEdit,
     NameEdit,
+    RoomNameInput,
 }
 
 pub struct ChatState {
@@ -41,8 +42,15 @@ impl ChatState {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum Focus {
+    Board,
+    Panel,
+}
+
 pub struct App {
     pub screen: Screen,
+    pub focus: Focus,
     pub board: Position,
     pub cursor: u8,
     pub running: bool,
@@ -90,6 +98,7 @@ pub struct App {
     pub sound_event_selection: usize,
     pub sound_param_selection: usize,
     pub name_input: String,
+    pub room_name_input: String,
 }
 
 const MENU_ITEMS: &[&str] = &[
@@ -108,7 +117,8 @@ impl App {
         let settings = Settings::load(data_dir);
         let player_name = settings.player_name.clone();
         Self {
-            screen: Screen::Menu, // default: board + menu on right
+            screen: Screen::Menu,
+            focus: Focus::Panel, // start with panel focused so menu is navigable
             board: Position::start(),
             cursor: 28,
             running: true,
@@ -150,6 +160,7 @@ impl App {
             sound_event_selection: 0,
             sound_param_selection: 0,
             name_input: String::new(),
+            room_name_input: String::new(),
         }
     }
 
@@ -173,6 +184,54 @@ impl App {
         self.puzzle_index.as_ref().map_or(0, |idx| idx.total)
     }
 
+    /// Update the status message to show controls for current state.
+    fn update_hint(&mut self) {
+        let focus_label = match self.focus {
+            Focus::Board => "[Board]",
+            Focus::Panel => "[Panel]",
+        };
+        self.message = match self.screen {
+            Screen::Menu | Screen::Analysis => {
+                match self.focus {
+                    Focus::Board => format!("{focus_label} hjkl=move Enter=select piece Tab=panel Esc=deselect q=quit"),
+                    Focus::Panel => format!("{focus_label} jk=navigate Enter=select Tab=board q=quit"),
+                }
+            }
+            Screen::ThemePicker => format!("{focus_label} jk=navigate Enter=select Esc=back"),
+            Screen::Puzzle => {
+                match self.focus {
+                    Focus::Board => format!("{focus_label} hjkl=move Enter=select/move H=hint n=next Esc=back"),
+                    Focus::Panel => format!("{focus_label} Tab=board H=hint n=next Esc=back"),
+                }
+            }
+            Screen::Results => format!("Enter=menu"),
+            Screen::RoomBrowser => format!("{focus_label} jk=navigate Enter=join n=new room r=refresh Esc=back"),
+            Screen::RoomLobby => {
+                if self.chat.typing {
+                    String::from("Type message, Enter=send, Esc=stop")
+                } else {
+                    format!("{focus_label} jk=navigate Enter=join t=new table Tab=chat Esc=leave")
+                }
+            }
+            Screen::LiveGame => {
+                if self.chat.typing {
+                    String::from("Type message, Enter=send, Esc=stop")
+                } else {
+                    match self.focus {
+                        Focus::Board => format!("{focus_label} hjkl=move Enter=select/move Tab=chat r=resign Esc=leave"),
+                        Focus::Panel => format!("{focus_label} Tab=board/chat r=resign Esc=leave"),
+                    }
+                }
+            }
+            Screen::Settings => format!("{focus_label} jk=navigate Enter=select Esc=back"),
+            Screen::SoundSettings => format!("{focus_label} jk=navigate Enter=edit m=mute Esc=back"),
+            Screen::SoundEventEdit => format!("{focus_label} jk=param hl=adjust p=preview s=save Esc=back"),
+            Screen::NameEdit => format!("Type name, Enter=save, Esc=cancel"),
+            Screen::RoomNameInput => format!("Type room name, Enter=create, Esc=cancel"),
+            Screen::Canvas => String::new(), // canvas has its own hints
+        };
+    }
+
     fn send_net(&self, msg: ClientMsg) {
         if let Some(ref net) = self.net {
             net.send(msg);
@@ -185,12 +244,47 @@ impl App {
         }
     }
 
+    /// Check if network connection is alive.
+    fn is_connected(&self) -> bool {
+        self.net.is_some() && self.my_id.is_some()
+    }
+
+    /// Try to reconnect to local server.
+    fn try_reconnect(&mut self) {
+        self.net = None;
+        self.net_rx = None;
+        self.my_id = None;
+        crate::server::start_server();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        match NetClient::connect("127.0.0.1") {
+            Ok((client, rx)) => {
+                self.net = Some(client);
+                self.net_rx = Some(rx);
+                self.message = String::from("Reconnected.");
+            }
+            Err(_) => {
+                self.message = String::from("Could not connect. Try again.");
+            }
+        }
+    }
+
     /// Called each tick from the event loop to drain network messages.
     pub fn poll_network(&mut self) {
         let msgs: Vec<ServerMsg> = if let Some(ref rx) = self.net_rx {
             let mut v = Vec::new();
-            while let Ok(msg) = rx.try_recv() {
-                v.push(msg);
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => v.push(msg),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // Connection lost
+                        self.net = None;
+                        self.net_rx = None;
+                        self.my_id = None;
+                        self.message = String::from("Connection lost.");
+                        break;
+                    }
+                }
             }
             v
         } else {
@@ -335,6 +429,7 @@ impl App {
     // ── Key Handling ───────────────────────────────────────────────
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Global: Ctrl+C / Ctrl+Q always quits
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') | KeyCode::Char('q') => {
@@ -345,65 +440,235 @@ impl App {
             }
         }
 
-        match self.screen {
-            Screen::Menu => self.handle_menu_key(key),
-            Screen::ThemePicker => self.handle_theme_picker_key(key),
-            Screen::Puzzle => self.handle_puzzle_key(key),
-            Screen::Analysis => self.handle_analysis_key(key),
-            Screen::Results => self.handle_results_key(key),
-            Screen::Canvas => self.handle_canvas_key(key),
-            Screen::Settings => self.handle_settings_key(key),
-            Screen::SoundSettings => self.handle_sound_settings_key(key),
-            Screen::SoundEventEdit => self.handle_sound_event_edit_key(key),
-            Screen::NameEdit => self.handle_name_edit_key(key),
-            Screen::RoomBrowser => self.handle_room_browser_key(key),
-            Screen::RoomLobby => self.handle_room_lobby_key(key),
-            Screen::LiveGame => self.handle_live_game_key(key),
+        // Canvas has its own controls (full screen, no focus model)
+        if let Screen::Canvas = self.screen {
+            self.handle_canvas_key(key);
+            return;
         }
-    }
 
-    fn handle_menu_key(&mut self, key: KeyEvent) {
-        // Arrow keys move the board cursor, Tab navigates menu
+        // Text input screens — consume all keys
+        match self.screen {
+            Screen::NameEdit => { self.handle_name_edit_key(key); return; }
+            Screen::RoomNameInput => { self.handle_room_name_input_key(key); return; }
+            _ => {}
+        }
+
+        // Chat typing mode — consume keys for text
+        if self.chat.typing {
+            match key.code {
+                KeyCode::Enter => {
+                    if !self.chat.input.is_empty() {
+                        let body = self.chat.input.clone();
+                        self.chat.input.clear();
+                        self.send_net(ClientMsg::SendChat { body });
+                    }
+                }
+                KeyCode::Char(c) => { self.chat.input.push(c); }
+                KeyCode::Backspace => { self.chat.input.pop(); }
+                KeyCode::Esc => {
+                    self.chat.typing = false;
+                    self.update_hint();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Global keys: Tab toggles focus, q quits from menu
         match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
-                self.move_cursor(key);
+            KeyCode::Tab => {
+                self.focus = match self.focus {
+                    Focus::Board => Focus::Panel,
+                    Focus::Panel => Focus::Board,
+                };
+                // In lobby/live game, Tab from Panel enters chat
+                match self.screen {
+                    Screen::RoomLobby | Screen::LiveGame => {
+                        if self.focus == Focus::Panel {
+                            self.chat.typing = true;
+                            self.message = String::from("Type message, Enter=send, Esc=stop");
+                            return;
+                        }
+                    }
+                    _ => {}
+                }
+                self.update_hint();
                 return;
             }
-            KeyCode::Enter => {
-                // If a piece is selected, try to move it (free play)
-                if self.selected_sq.is_some() {
-                    self.handle_free_move();
-                    return;
-                }
-                // If cursor is on a piece, select it
-                if self.board.piece_at(self.cursor).is_some() {
-                    self.select_piece(self.cursor);
+            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                if let Screen::Menu = self.screen {
+                    self.running = false;
                     return;
                 }
             }
             _ => {}
         }
+
+        // Route based on focus
+        match self.focus {
+            Focus::Board => self.handle_board_input(key),
+            Focus::Panel => self.handle_panel_input(key),
+        }
+    }
+
+    /// Board-focused input: cursor movement, piece selection
+    fn handle_board_input(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => { self.running = false; }
-            KeyCode::Tab => {
-                // Cycle menu selection
-                self.menu_selection = (self.menu_selection + 1) % MENU_ITEMS.len();
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
+                self.move_cursor(key);
             }
-            KeyCode::Char('1') => { self.menu_select(0); }
-            KeyCode::Char('2') => { self.menu_select(1); }
-            KeyCode::Char('3') => { self.menu_select(2); }
-            KeyCode::Char('4') => { self.menu_select(3); }
-            KeyCode::Char('5') => { self.menu_select(4); }
-            KeyCode::Char(' ') => {
-                // Space to activate selected menu item
-                let sel = self.menu_selection;
-                self.menu_select(sel);
+            KeyCode::Enter => {
+                match self.screen {
+                    Screen::Menu | Screen::Analysis => {
+                        // Free piece movement
+                        if self.selected_sq.is_some() {
+                            self.handle_free_move();
+                        } else if self.board.piece_at(self.cursor).is_some() {
+                            self.select_piece(self.cursor);
+                        }
+                    }
+                    Screen::Puzzle => { self.handle_puzzle_select(); }
+                    Screen::LiveGame => {
+                        if self.is_my_turn() { self.handle_live_game_select(); }
+                    }
+                    _ => {}
+                }
             }
             KeyCode::Esc => {
-                // Deselect piece
                 self.selected_sq = None;
                 self.highlights.clear();
+                self.update_hint();
+            }
+            // Screen-specific shortcuts that work from board focus
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                if let Screen::Puzzle = self.screen {
+                    self.score_total += 1;
+                    self.advance_puzzle();
+                }
+            }
+            KeyCode::Char('H') => {
+                if let Screen::Puzzle = self.screen {
+                    if let Some(puzzle) = self.puzzle_queue.get(self.puzzle_pos) {
+                        if self.puzzle_move_index < puzzle.moves.len() {
+                            let hint_move = puzzle.moves[self.puzzle_move_index].clone();
+                            self.message = format!("Hint: {hint_move}");
+                            if let Some(mv) = Move::from_uci(&hint_move) {
+                                self.highlights = vec![mv.from, mv.to];
+                            }
+                            self.play_sound(|a, s| a.play_hint(s));
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                if let Screen::LiveGame = self.screen {
+                    self.send_net(ClientMsg::Resign);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Panel-focused input: menu/list navigation, Enter activates
+    fn handle_panel_input(&mut self, key: KeyEvent) {
+        match self.screen {
+            Screen::Menu | Screen::Analysis => self.handle_menu_panel(key),
+            Screen::ThemePicker => self.handle_theme_picker_key(key),
+            Screen::Puzzle => self.handle_puzzle_panel(key),
+            Screen::Results => self.handle_results_key(key),
+            Screen::RoomBrowser => self.handle_room_browser_key(key),
+            Screen::RoomLobby => self.handle_room_lobby_panel(key),
+            Screen::LiveGame => {
+                // Panel in live game is chat — Tab already handles entering chat
+                // Esc goes back
+                if key.code == KeyCode::Esc {
+                    self.send_net(ClientMsg::LeaveTable);
+                    self.current_table = None;
+                    self.game_active = false;
+                    self.screen = Screen::RoomLobby;
+                    self.focus = Focus::Panel;
+                    self.update_hint();
+                }
+            }
+            Screen::Settings => self.handle_settings_key(key),
+            Screen::SoundSettings => self.handle_sound_settings_key(key),
+            Screen::SoundEventEdit => self.handle_sound_event_edit_key(key),
+            _ => {}
+        }
+    }
+
+    fn handle_menu_panel(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.menu_selection > 0 { self.menu_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.menu_selection < MENU_ITEMS.len() - 1 { self.menu_selection += 1; }
+            }
+            KeyCode::Enter => {
+                self.menu_select(self.menu_selection);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_puzzle_panel(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                self.score_total += 1;
+                self.advance_puzzle();
+            }
+            KeyCode::Char('H') => {
+                if let Some(puzzle) = self.puzzle_queue.get(self.puzzle_pos) {
+                    if self.puzzle_move_index < puzzle.moves.len() {
+                        let hint_move = puzzle.moves[self.puzzle_move_index].clone();
+                        self.message = format!("Hint: {hint_move}");
+                        if let Some(mv) = Move::from_uci(&hint_move) {
+                            self.highlights = vec![mv.from, mv.to];
+                        }
+                        self.play_sound(|a, s| a.play_hint(s));
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                self.selected_sq = None;
+                self.highlights.clear();
+                self.screen = Screen::ThemePicker;
+                self.focus = Focus::Panel;
+                self.update_hint();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_room_lobby_panel(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.table_selection > 0 { self.table_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.tables.is_empty() && self.table_selection < self.tables.len() - 1 {
+                    self.table_selection += 1;
+                }
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.send_net(ClientMsg::CreateTable);
+            }
+            KeyCode::Enter => {
+                if let Some(table) = self.tables.get(self.table_selection) {
+                    self.send_net(ClientMsg::JoinTable { table_id: table.id });
+                }
+            }
+            KeyCode::Esc => {
+                self.send_net(ClientMsg::LeaveRoom);
+                self.current_room = None;
+                self.room_players.clear();
+                self.tables.clear();
+                self.send_net(ClientMsg::ListRooms);
+                self.screen = Screen::RoomBrowser;
+                self.focus = Focus::Panel;
+                self.update_hint();
             }
             _ => {}
         }
@@ -576,39 +841,6 @@ impl App {
         }
     }
 
-    fn handle_puzzle_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
-                self.move_cursor(key);
-            }
-            KeyCode::Enter => { self.handle_puzzle_select(); }
-            KeyCode::Char('n') | KeyCode::Char('N') => {
-                self.score_total += 1;
-                self.advance_puzzle();
-            }
-            KeyCode::Char('H') => {
-                if let Some(puzzle) = self.puzzle_queue.get(self.puzzle_pos) {
-                    if self.puzzle_move_index < puzzle.moves.len() {
-                        let hint_move = &puzzle.moves[self.puzzle_move_index];
-                        self.message = format!("Hint: {hint_move}");
-                        if let Some(mv) = Move::from_uci(hint_move) {
-                            self.highlights = vec![mv.from, mv.to];
-                        }
-                        self.play_sound(|a, s| a.play_hint(s));
-                    }
-                }
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.selected_sq = None;
-                self.highlights.clear();
-                self.screen = Screen::ThemePicker;
-                self.message = String::from("Pick a tactic theme");
-            }
-            _ => {}
-        }
-    }
-
     fn handle_puzzle_select(&mut self) {
         let sq = self.cursor;
         if let Some(from) = self.selected_sq {
@@ -713,20 +945,6 @@ impl App {
         }
     }
 
-    fn handle_analysis_key(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
-                self.move_cursor(key);
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.screen = Screen::Menu;
-                self.message = String::from("hjkl/arrows to navigate, Enter to select");
-            }
-            _ => {}
-        }
-    }
-
     fn handle_results_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -784,13 +1002,22 @@ impl App {
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
-                let name = format!("{}'s room", self.player_name);
-                self.send_net(ClientMsg::CreateRoom { name });
+                if !self.is_connected() {
+                    self.try_reconnect();
+                    return;
+                }
+                self.room_name_input = format!("{}'s room", self.player_name);
+                self.screen = Screen::RoomNameInput;
+                self.message = String::from("Name your room, Enter to create, Esc to cancel");
             }
             KeyCode::Char('r') => {
-                self.send_net(ClientMsg::ListRooms);
+                if !self.is_connected() {
+                    self.try_reconnect();
+                }
+                if self.is_connected() {
+                    self.send_net(ClientMsg::ListRooms);
+                }
                 self.remote_servers = tracker::fetch_servers();
-                // Filter out our own server from remote list
                 if let Some(ref ip) = self.public_ip {
                     self.remote_servers.retain(|s| s.host != *ip);
                 }
@@ -804,120 +1031,20 @@ impl App {
         }
     }
 
-    // ── Room Lobby ─────────────────────────────────────────────────
-
-    fn handle_room_lobby_key(&mut self, key: KeyEvent) {
-        if self.chat.typing {
-            match key.code {
-                KeyCode::Enter => {
-                    if !self.chat.input.is_empty() {
-                        let body = self.chat.input.clone();
-                        self.chat.input.clear();
-                        self.send_net(ClientMsg::SendChat { body });
-                    }
-                }
-                KeyCode::Char(c) => { self.chat.input.push(c); }
-                KeyCode::Backspace => { self.chat.input.pop(); }
-                KeyCode::Esc => {
-                    self.chat.typing = false;
-                    self.message = String::from("[t] new table, Enter=join table, Tab=chat, Esc=leave");
-                }
-                _ => {}
-            }
-            return;
-        }
-
+    fn handle_room_name_input_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Tab => {
-                self.chat.typing = true;
-                self.message = String::from("Type message, Enter to send, Esc to stop");
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if self.table_selection > 0 { self.table_selection -= 1; }
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.tables.is_empty() && self.table_selection < self.tables.len() - 1 {
-                    self.table_selection += 1;
-                }
-            }
-            KeyCode::Char('t') | KeyCode::Char('T') => {
-                self.send_net(ClientMsg::CreateTable);
-            }
-            KeyCode::Enter | KeyCode::Char('l') => {
-                if let Some(table) = self.tables.get(self.table_selection) {
-                    self.send_net(ClientMsg::JoinTable { table_id: table.id });
-                }
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.send_net(ClientMsg::LeaveRoom);
-                self.current_room = None;
-                self.room_players.clear();
-                self.tables.clear();
-                self.send_net(ClientMsg::ListRooms);
-                self.screen = Screen::RoomBrowser;
-                self.message = String::from("Browse rooms or create one.");
-            }
-            _ => {}
-        }
-    }
-
-    // ── Live Game ──────────────────────────────────────────────────
-
-    fn handle_live_game_key(&mut self, key: KeyEvent) {
-        // Chat in live game
-        if self.chat.typing {
-            match key.code {
-                KeyCode::Enter => {
-                    if !self.chat.input.is_empty() {
-                        let body = self.chat.input.clone();
-                        self.chat.input.clear();
-                        self.send_net(ClientMsg::SendChat { body });
-                    }
-                }
-                KeyCode::Char(c) => { self.chat.input.push(c); }
-                KeyCode::Backspace => { self.chat.input.pop(); }
-                KeyCode::Esc => { self.chat.typing = false; }
-                _ => {}
-            }
-            return;
-        }
-
-        // Game is over — Esc to go back
-        if !self.game_active {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') => {
-                    self.send_net(ClientMsg::LeaveTable);
-                    self.current_table = None;
-                    self.screen = Screen::RoomLobby;
-                    self.message = String::from("[t] new table, Enter=join table, Tab=chat, Esc=leave");
-                }
-                _ => {}
-            }
-            return;
-        }
-
-        match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-            | KeyCode::Char('h') | KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Char('l') => {
-                if self.is_my_turn() { self.move_cursor(key); }
-            }
             KeyCode::Enter => {
-                if self.is_my_turn() { self.handle_live_game_select(); }
+                if !self.room_name_input.is_empty() {
+                    let name = self.room_name_input.clone();
+                    self.send_net(ClientMsg::CreateRoom { name });
+                    // Server will respond with RoomJoined
+                }
             }
-            KeyCode::Tab => {
-                self.chat.typing = true;
-                self.message = String::from("Type message, Enter to send, Esc to stop");
-            }
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                // Resign
-                self.send_net(ClientMsg::Resign);
-            }
+            KeyCode::Char(c) => { self.room_name_input.push(c); }
+            KeyCode::Backspace => { self.room_name_input.pop(); }
             KeyCode::Esc => {
-                self.send_net(ClientMsg::LeaveTable);
-                self.current_table = None;
-                self.game_active = false;
-                self.screen = Screen::RoomLobby;
-                self.message = String::from("[t] new table, Enter=join table, Tab=chat, Esc=leave");
+                self.screen = Screen::RoomBrowser;
+                self.message = String::from("[n]ew room, [r]efresh, Enter=join");
             }
             _ => {}
         }
