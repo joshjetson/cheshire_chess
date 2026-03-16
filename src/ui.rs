@@ -73,14 +73,37 @@ pub fn draw(frame: &mut Frame, app: &App) {
         _ => {}
     }
 
-    // Everything else: board on left, context on right
+    // Adaptive layout: shrink/hide title+status when terminal is small
+    let total_height = frame.area().height;
+    let (title_h, status_h) = if total_height >= 33 {
+        (3u16, 3u16) // full: title + status bars
+    } else if total_height >= 29 {
+        (1, 1) // compact: single-line title + status
+    } else {
+        (0, 1) // minimal: no title, single-line status
+    };
+
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+        .constraints([Constraint::Length(title_h), Constraint::Min(0), Constraint::Length(status_h)])
         .split(frame.area());
 
-    draw_title(frame, outer[0]);
-    draw_status(frame, outer[2], &app.message);
+    if title_h > 0 {
+        if title_h >= 3 {
+            draw_title(frame, outer[0]);
+        } else {
+            let title = Paragraph::new(" Cheshire Chess")
+                .style(Style::default().fg(TITLE_COLOR).add_modifier(Modifier::BOLD));
+            frame.render_widget(title, outer[0]);
+        }
+    }
+    if status_h >= 3 {
+        draw_status(frame, outer[2], &app.message);
+    } else {
+        let status = Paragraph::new(format!(" {}", app.message))
+            .style(Style::default().fg(Color::Rgb(160, 140, 180)));
+        frame.render_widget(status, outer[2]);
+    }
 
     let board_width = 2 + 2 + 8 * SQ_WIDTH; // borders + rank label + squares
     let main = Layout::default()
@@ -625,7 +648,13 @@ fn draw_right_settings(frame: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = SETTINGS_ITEMS.iter().enumerate().map(|(i, &item)| {
         let detail = match i {
             0 => format!("  [{}]", app.settings.player_name),
-            1 => format!("  [{}]", if app.settings.sound.enabled { "on" } else { "off" }),
+            1 => {
+                if app.audio.is_none() {
+                    String::from("  [unavailable — install audio deps]")
+                } else {
+                    format!("  [{}]", if app.settings.sound.enabled { "on" } else { "off" })
+                }
+            }
             _ => String::new(),
         };
         ListItem::new(format!("{}{item}{detail}", prefix(i == app.settings_selection)))
@@ -640,6 +669,11 @@ fn draw_right_name_edit(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_right_sound_settings(frame: &mut Frame, app: &App, area: Rect) {
+    if app.audio.is_none() {
+        let text = "\n  Audio not available.\n\n  On Linux, install:\n    apt install libasound2-dev\n\n  Then reinstall:\n    cargo install cheshire_chess";
+        frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Sound")), area);
+        return;
+    }
     let items: Vec<ListItem> = SOUND_EVENT_NAMES.iter().enumerate().map(|(i, &name)| {
         let p = app.get_event_params(i);
         ListItem::new(format!("{}{name} ({} {}Hz)", prefix(i == app.sound_event_selection), p.waveform.name(), p.frequency as u32))

@@ -1,19 +1,26 @@
+#[cfg(feature = "audio")]
 use std::f32::consts::PI;
 
+#[cfg(feature = "audio")]
 use rodio::{OutputStream, OutputStreamHandle, Source, buffer::SamplesBuffer};
 
 use crate::settings::{SynthParams, SoundSettings, Waveform};
 
+#[cfg(feature = "audio")]
 pub struct Audio {
     _stream: OutputStream,
     handle: OutputStreamHandle,
 }
 
+#[cfg(not(feature = "audio"))]
+pub struct Audio;
+
+#[cfg(feature = "audio")]
 const SR: u32 = 44100;
+#[cfg(feature = "audio")]
 const SRF: f32 = 44100.0;
 
-// ── Oscillators ────────────────────────────────────────────────────
-
+#[cfg(feature = "audio")]
 fn osc(t: f32, freq: f32, waveform: &Waveform) -> f32 {
     match waveform {
         Waveform::Sine => (2.0 * PI * freq * t).sin(),
@@ -28,8 +35,7 @@ fn osc(t: f32, freq: f32, waveform: &Waveform) -> f32 {
     }
 }
 
-// ── ADSR Envelope ──────────────────────────────────────────────────
-
+#[cfg(feature = "audio")]
 fn adsr(t: f32, a: f32, d: f32, s: f32, r: f32, total: f32) -> f32 {
     let release_start = total - r;
     if t < a {
@@ -51,13 +57,13 @@ fn adsr(t: f32, a: f32, d: f32, s: f32, r: f32, total: f32) -> f32 {
     }
 }
 
-// ── Simple one-pole low-pass filter ────────────────────────────────
-
+#[cfg(feature = "audio")]
 struct LowPass {
     prev: f32,
     alpha: f32,
 }
 
+#[cfg(feature = "audio")]
 impl LowPass {
     fn new(cutoff: f32) -> Self {
         let rc = 1.0 / (2.0 * PI * cutoff);
@@ -71,8 +77,7 @@ impl LowPass {
     }
 }
 
-// ── Render a sound from SynthParams ────────────────────────────────
-
+#[cfg(feature = "audio")]
 pub fn render_sound(params: &SynthParams, master_vol: f32, filter_cutoff: f32) -> Vec<f32> {
     let samples = (SR as u64 * params.duration_ms) / 1000;
     let total_time = params.duration_ms as f32 / 1000.0;
@@ -101,11 +106,13 @@ pub fn render_sound(params: &SynthParams, master_vol: f32, filter_cutoff: f32) -
     buf
 }
 
+#[cfg(feature = "audio")]
 fn play_buf(handle: &OutputStreamHandle, buf: Vec<f32>) {
     let source = SamplesBuffer::new(1, SR, buf);
     let _ = handle.play_raw(source.convert_samples());
 }
 
+#[cfg(feature = "audio")]
 impl Audio {
     pub fn new() -> Option<Self> {
         let (stream, handle) = OutputStream::try_default().ok()?;
@@ -142,4 +149,22 @@ impl Audio {
         params.release = 0.3;
         self.play(&params, s);
     }
+}
+
+#[cfg(not(feature = "audio"))]
+impl Audio {
+    pub fn new() -> Option<Self> { Some(Audio) }
+    pub fn play(&self, _params: &SynthParams, _sound: &SoundSettings) {}
+    pub fn play_login(&self, _s: &SoundSettings) {}
+    pub fn play_exit(&self, _s: &SoundSettings) {}
+    pub fn play_move(&self, _s: &SoundSettings) {}
+    pub fn play_capture(&self, _s: &SoundSettings) {}
+    pub fn play_check(&self, _s: &SoundSettings) {}
+    pub fn play_checkmate(&self, _s: &SoundSettings) {}
+    pub fn play_wrong(&self, _s: &SoundSettings) {}
+    pub fn play_correct(&self, _s: &SoundSettings) {}
+    pub fn play_hint(&self, _s: &SoundSettings) {}
+    pub fn play_tick(&self, _s: &SoundSettings) {}
+    pub fn play_select(&self, _s: &SoundSettings) {}
+    pub fn play_session_complete(&self, _s: &SoundSettings) {}
 }

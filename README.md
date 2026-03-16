@@ -46,6 +46,29 @@ cargo build --release
 
 Requires Rust 1.75 or newer.
 
+### Linux audio dependencies
+
+Audio requires ALSA development libraries on Linux:
+
+```bash
+# Debian/Ubuntu
+sudo apt install pkg-config libasound2-dev
+
+# Fedora
+sudo dnf install alsa-lib-devel
+
+# Arch
+sudo pacman -S alsa-lib
+```
+
+To install without audio (no system deps needed):
+
+```bash
+cargo install cheshire_chess --no-default-features
+```
+
+macOS and Windows work out of the box — no extra dependencies.
+
 ### Puzzles (optional)
 
 Download the Lichess puzzle database for tactics training (~300MB download, ~1GB uncompressed):
