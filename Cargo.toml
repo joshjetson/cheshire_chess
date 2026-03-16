@@ -2,6 +2,13 @@
 name = "cheshire_chess"
 version = "0.1.0"
 edition = "2021"
+description = "A terminal chess app — tactics training, live multiplayer, game rooms, and custom pieces"
+license = "MIT"
+repository = "https://github.com/joshjetson/cheshire_chess"
+homepage = "https://github.com/joshjetson/cheshire_chess"
+keywords = ["chess", "tui", "terminal", "game", "puzzles"]
+categories = ["games", "command-line-interface"]
+readme = "README.md"
 
 [dependencies]
 ratatui = "0.28"
