@@ -3,44 +3,42 @@
 A chess application that lives in your terminal. Practice tactics, play live games, and hang out in game rooms — all from the command line. No browser, no GUI, no Electron. Works over SSH.
 
 ```
-    +---;---+---+---+---+---+---+---+
-  8 | R | N | B | Q | K | B | N | R |
     +---+---+---+---+---+---+---+---+
-  7 | p | p | p | p | p | p | p | p |
+  8 | R | N | B | Q | K | B | N | R |       Pieces in-game:
     +---+---+---+---+---+---+---+---+
+  7 | p | p | p | p | p | p | p | p |       ▕▟✚▙▏  King
+    +---+---+---+---+---+---+---+---+        ▀▀▀
   6 |   |   |   |   |   |   |   |   |
+    +---+---+---+---+---+---+---+---+       ▕▟✠▙▏  Queen
+  5 |   |   |   |   |   |   |   |   |        ◥■◤
     +---+---+---+---+---+---+---+---+
-  5 |   |   |   |   |   |   |   |   |
-    +---+---+---+---+---+---+---+---+
-  4 |   |   |   |   |   |   |   |   |
-    +---+---+---+---+---+---+---+---+
+  4 |   |   |   |   |   |   |   |   |       ▕▟▆▙▏  Rook
+    +---+---+---+---+---+---+---+---+        ▀▀▀
   3 |   |   |   |   |   |   |   |   |
+    +---+---+---+---+---+---+---+---+         ▲    Bishop
+  2 | p | p | p | p | p | p | p | p |        ▐▀▌
     +---+---+---+---+---+---+---+---+
-  2 | p | p | p | p | p | p | p | p |
-    +---+---+---+---+---+---+---+---+
-  1 | R | N | B | Q | K | B | N | R |
-    +---+---+---+---+---+---+---+---+
-      a   b   c   d   e   f   g   h
+  1 | R | N | B | Q | K | B | N | R |       ▂▅▅▅▃▃ Knight
+    +---+---+---+---+---+---+---+---+       ▕▣▞ ▚▚▚
+      a   b   c   d   e   f   g   h         ▀   ▚▚
+
+                                               ⭘   Pawn
+                                              ▜█▛
 ```
 
-## What It Does
-
-- **5.8 million puzzles** from the Lichess database — forks, pins, skewers, mates, and more
-- **Live multiplayer** — create game rooms, play opponents, spectate, and chat
-- **Peer-to-peer** — every client is also a server. No central game server required
-- **Internet discovery** — players find each other automatically through a tracker service
-- **Custom pieces** — draw your own piece art with a built-in canvas editor
-- **Runs anywhere** — pure terminal UI, works in any terminal emulator, over SSH, on any OS
-
 ## Install
+
+```bash
+cargo install cheshire_chess
+```
+
+Or build from source:
 
 ```bash
 git clone https://github.com/joshjetson/cheshire_chess.git
 cd cheshire_chess
 cargo build --release
 ```
-
-The binary is at `target/release/cheshire-chess`.
 
 ### Puzzles
 
@@ -55,7 +53,7 @@ zstd -d data/lichess_db_puzzle.csv.zst -o data/lichess_puzzles.csv
 ## Usage
 
 ```bash
-cargo run --release
+cheshire-chess
 ```
 
 ### Controls
@@ -68,6 +66,15 @@ cargo run --release
 | `Esc` | Go back |
 | `Ctrl+C` | Quit from anywhere |
 | `q` | Quit / back |
+
+## What It Does
+
+- **5.8 million puzzles** from the Lichess database — forks, pins, skewers, mates, and more
+- **Live multiplayer** — create game rooms, play opponents, spectate, and chat
+- **Peer-to-peer** — every client is also a server. No central game server required
+- **Internet discovery** — players find each other automatically through a tracker service
+- **Custom pieces** — draw your own piece art with a built-in canvas editor
+- **Runs anywhere** — pure terminal UI, works in any terminal emulator, over SSH, on any OS
 
 ## Features
 
@@ -85,7 +92,7 @@ Select **Go Online** from the menu. Your app starts hosting automatically — no
 
 - **Game Tables** — anyone in the room can create a table. Another player joins to start a game. Spectators can watch any table.
 - **Room Chat** — everyone in the room shares one chat. Talk to players, spectators, whoever.
-- **Internet Discovery** — when you go online, your server registers with a tracker at `chess.virtualraremedia.com`. Other players see you in their room browser and can connect directly to you.
+- **Internet Discovery** — when you go online, your server registers with a tracker at `chess.virtualraremedia.com`. Other players see you in their room browser and can connect directly.
 
 ```
 ┌─ Josh's Room ──────────┐┌─ Chat ──────────────────┐
