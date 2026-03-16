@@ -1,10 +1,12 @@
 mod app;
+mod audio;
 mod board;
 mod canvas;
 mod net;
 mod protocol;
 mod puzzle;
 mod server;
+mod settings;
 mod tracker;
 mod ui;
 
@@ -64,6 +66,7 @@ extern "C" fn sigint_handler(_sig: libc::c_int) {
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool) -> io::Result<()> {
     let data_dir = Path::new("data");
     let mut app = App::new(data_dir);
+    app.play_sound(|a, s| a.play_login(s));
 
     let puzzle_path = Path::new("data/lichess_puzzles.csv");
     if puzzle_path.exists() {
@@ -80,7 +83,6 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool)
     while app.running && !quit.load(Ordering::Relaxed) {
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
-        // Drain network messages
         app.poll_network();
 
         if event::poll(Duration::from_millis(50))? {
@@ -89,6 +91,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool)
             }
         }
     }
+
+    app.play_sound(|a, s| a.play_exit(s));
+    std::thread::sleep(Duration::from_millis(400)); // let exit sound finish
 
     Ok(())
 }

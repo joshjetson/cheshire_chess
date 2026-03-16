@@ -3,11 +3,13 @@ use std::sync::mpsc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::audio::Audio;
 use crate::board::{Move, Position};
 use crate::canvas::{CanvasMode, CanvasState, CustomPieces, PIECE_TYPES, SHAPE_PALETTE};
 use crate::net::NetClient;
 use crate::protocol::*;
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
+use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 use crate::tracker::{self, RemoteServer};
 
 pub enum Screen {
@@ -20,6 +22,10 @@ pub enum Screen {
     RoomBrowser,
     RoomLobby,
     LiveGame,
+    Settings,
+    SoundSettings,
+    SoundEventEdit,
+    NameEdit,
 }
 
 pub struct ChatState {
@@ -76,13 +82,20 @@ pub struct App {
     pub remote_servers: Vec<RemoteServer>,
     pub heartbeat_tx: Option<mpsc::Sender<u32>>,
     pub public_ip: Option<String>,
+    // Audio & Settings
+    pub audio: Option<Audio>,
+    pub settings: Settings,
+    pub settings_selection: usize,
+    pub sound_event_selection: usize,
+    pub sound_param_selection: usize,
+    pub name_input: String,
 }
 
 const MENU_ITEMS: &[&str] = &[
     "Practice Tactics",
     "View Starting Position",
     "Go Online",
-    "Piece Canvas",
+    "Settings",
     "Quit",
 ];
 
@@ -91,6 +104,8 @@ const PUZZLE_BATCH_SIZE: usize = 200;
 impl App {
     pub fn new(data_dir: &Path) -> Self {
         let pieces_path = data_dir.join("custom_pieces.txt");
+        let settings = Settings::load(data_dir);
+        let player_name = settings.player_name.clone();
         Self {
             screen: Screen::Menu,
             board: Position::start(),
@@ -112,9 +127,7 @@ impl App {
             net: None,
             net_rx: None,
             my_id: None,
-            player_name: std::env::var("USER")
-                .or_else(|_| std::env::var("USERNAME"))
-                .unwrap_or_else(|_| "Player".into()),
+            player_name,
             room_list: Vec::new(),
             room_selection: 0,
             current_room: None,
@@ -130,6 +143,12 @@ impl App {
             remote_servers: Vec::new(),
             heartbeat_tx: None,
             public_ip: None,
+            audio: Audio::new(),
+            settings,
+            settings_selection: 0,
+            sound_event_selection: 0,
+            sound_param_selection: 0,
+            name_input: String::new(),
         }
     }
 
@@ -156,6 +175,12 @@ impl App {
     fn send_net(&self, msg: ClientMsg) {
         if let Some(ref net) = self.net {
             net.send(msg);
+        }
+    }
+
+    pub fn play_sound(&self, f: impl FnOnce(&Audio, &crate::settings::SoundSettings)) {
+        if let Some(ref audio) = self.audio {
+            f(audio, &self.settings.sound);
         }
     }
 
@@ -254,6 +279,12 @@ impl App {
             ServerMsg::MoveMade { table_id, uci: _, fen } => {
                 if self.current_table == Some(table_id) {
                     if let Some(pos) = Position::from_fen(&fen) {
+                        let is_check = pos.in_check(pos.side_to_move);
+                        if is_check {
+                            self.play_sound(|a, s| a.play_check(s));
+                        } else {
+                            self.play_sound(|a, s| a.play_move(s));
+                        }
                         self.board = pos;
                     }
                     self.selected_sq = None;
@@ -272,6 +303,7 @@ impl App {
                         Some(_) => "You lose.",
                         None => "Draw.",
                     };
+                    self.play_sound(|a, s| a.play_checkmate(s));
                     self.message = format!("{reason} — {result} Press Esc to return.");
                     self.game_active = false;
                 }
@@ -319,6 +351,10 @@ impl App {
             Screen::Analysis => self.handle_analysis_key(key),
             Screen::Results => self.handle_results_key(key),
             Screen::Canvas => self.handle_canvas_key(key),
+            Screen::Settings => self.handle_settings_key(key),
+            Screen::SoundSettings => self.handle_sound_settings_key(key),
+            Screen::SoundEventEdit => self.handle_sound_event_edit_key(key),
+            Screen::NameEdit => self.handle_name_edit_key(key),
             Screen::RoomBrowser => self.handle_room_browser_key(key),
             Screen::RoomLobby => self.handle_room_lobby_key(key),
             Screen::LiveGame => self.handle_live_game_key(key),
@@ -383,9 +419,9 @@ impl App {
                     }
                 }
                 3 => {
-                    self.canvas = CanvasState::new();
-                    self.screen = Screen::Canvas;
-                    self.message = String::from("Select a piece to draw");
+                    self.settings_selection = 0;
+                    self.screen = Screen::Settings;
+                    self.message = String::from("Settings");
                 }
                 4 => { self.running = false; }
                 _ => {}
@@ -488,6 +524,7 @@ impl App {
                         if let Some(mv) = Move::from_uci(hint_move) {
                             self.highlights = vec![mv.from, mv.to];
                         }
+                        self.play_sound(|a, s| a.play_hint(s));
                     }
                 }
             }
@@ -523,16 +560,36 @@ impl App {
                 } else { false };
 
                 if is_correct {
+                    // Check if this is a capture
+                    let is_capture = self.board.piece_at(mv.to).is_some();
                     self.board = self.board.make_move(mv);
+                    let is_check = self.board.in_check(self.board.side_to_move);
+                    let is_checkmate = self.board.is_checkmate();
+
                     self.selected_sq = None;
                     self.highlights.clear();
                     self.puzzle_move_index += 1;
                     let puzzle_len = self.puzzle_queue.get(self.puzzle_pos).map_or(0, |p| p.moves.len());
+
                     if self.puzzle_move_index >= puzzle_len {
                         self.score_correct += 1;
                         self.score_total += 1;
+                        if is_checkmate {
+                            self.play_sound(|a, s| a.play_checkmate(s));
+                        } else {
+                            self.play_sound(|a, s| a.play_session_complete(s));
+                        }
                         self.message = String::from("Correct! Puzzle solved! Press [n] for next.");
                     } else {
+                        if is_checkmate {
+                            self.play_sound(|a, s| a.play_checkmate(s));
+                        } else if is_check {
+                            self.play_sound(|a, s| a.play_check(s));
+                        } else if is_capture {
+                            self.play_sound(|a, s| a.play_capture(s));
+                        } else {
+                            self.play_sound(|a, s| a.play_correct(s));
+                        }
                         if let Some(puzzle) = self.puzzle_queue.get(self.puzzle_pos) {
                             if self.puzzle_move_index < puzzle.moves.len() {
                                 let opp_uci = puzzle.moves[self.puzzle_move_index].clone();
@@ -545,6 +602,7 @@ impl App {
                         self.message = String::from("Correct! Keep going...");
                     }
                 } else {
+                    self.play_sound(|a, s| a.play_wrong(s));
                     self.selected_sq = None;
                     self.highlights.clear();
                     self.message = String::from("Wrong move. Try again or [H] for hint.");
@@ -823,6 +881,190 @@ impl App {
             if let Some((_, color)) = self.board.piece_at(sq) {
                 if color == us_color { self.select_piece(sq); }
             }
+        }
+    }
+
+    // ── Settings ───────────────────────────────────────────────────
+
+    fn handle_settings_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.settings_selection > 0 { self.settings_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.settings_selection < SETTINGS_ITEMS.len() - 1 { self.settings_selection += 1; }
+            }
+            KeyCode::Enter | KeyCode::Char('l') => {
+                match self.settings_selection {
+                    0 => {
+                        // Player Name
+                        self.name_input = self.settings.player_name.clone();
+                        self.screen = Screen::NameEdit;
+                        self.message = String::from("Type your name, Enter to save, Esc to cancel");
+                    }
+                    1 => {
+                        // Sound Settings
+                        self.sound_event_selection = 0;
+                        self.screen = Screen::SoundSettings;
+                        self.message = String::from("Select a sound event to edit");
+                    }
+                    2 => {
+                        // Piece Canvas
+                        self.canvas = CanvasState::new();
+                        self.screen = Screen::Canvas;
+                        self.message = String::from("Select a piece to draw");
+                    }
+                    3 => {
+                        // Back
+                        self.screen = Screen::Menu;
+                        self.message = String::from("hjkl/arrows to navigate, Enter to select");
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.screen = Screen::Menu;
+                self.message = String::from("hjkl/arrows to navigate, Enter to select");
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_name_edit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                if !self.name_input.is_empty() {
+                    self.settings.player_name = self.name_input.clone();
+                    self.player_name = self.name_input.clone();
+                    let _ = self.settings.save();
+                    self.message = format!("Name set to: {}", self.player_name);
+                }
+                self.screen = Screen::Settings;
+            }
+            KeyCode::Char(c) => { self.name_input.push(c); }
+            KeyCode::Backspace => { self.name_input.pop(); }
+            KeyCode::Esc => {
+                self.screen = Screen::Settings;
+                self.message = String::from("Settings");
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_sound_settings_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.sound_event_selection > 0 { self.sound_event_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.sound_event_selection < SOUND_EVENT_NAMES.len() - 1 {
+                    self.sound_event_selection += 1;
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('l') => {
+                self.sound_param_selection = 0;
+                self.screen = Screen::SoundEventEdit;
+                self.message = format!("Editing: {} — hjkl to adjust, [p] preview, Esc back",
+                    SOUND_EVENT_NAMES[self.sound_event_selection]);
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                // Toggle mute
+                self.settings.sound.enabled = !self.settings.sound.enabled;
+                let state = if self.settings.sound.enabled { "ON" } else { "OFF" };
+                self.message = format!("Sound: {state}");
+                let _ = self.settings.save();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.screen = Screen::Settings;
+                self.message = String::from("Settings");
+            }
+            _ => {}
+        }
+    }
+
+    pub fn get_event_params_mut(&mut self, idx: usize) -> &mut crate::settings::SynthParams {
+        let e = &mut self.settings.sound.events;
+        match idx {
+            0 => &mut e.login,
+            1 => &mut e.exit,
+            2 => &mut e.piece_move,
+            3 => &mut e.capture,
+            4 => &mut e.check,
+            5 => &mut e.checkmate,
+            6 => &mut e.wrong_move,
+            7 => &mut e.correct,
+            8 => &mut e.hint,
+            9 => &mut e.tick,
+            _ => &mut e.select,
+        }
+    }
+
+    pub fn get_event_params(&self, idx: usize) -> &crate::settings::SynthParams {
+        let e = &self.settings.sound.events;
+        match idx {
+            0 => &e.login,
+            1 => &e.exit,
+            2 => &e.piece_move,
+            3 => &e.capture,
+            4 => &e.check,
+            5 => &e.checkmate,
+            6 => &e.wrong_move,
+            7 => &e.correct,
+            8 => &e.hint,
+            9 => &e.tick,
+            _ => &e.select,
+        }
+    }
+
+    fn handle_sound_event_edit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.sound_param_selection > 0 { self.sound_param_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.sound_param_selection < SYNTH_PARAM_NAMES.len() - 1 {
+                    self.sound_param_selection += 1;
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.adjust_param(1);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.adjust_param(-1);
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                // Preview
+                let params = self.get_event_params(self.sound_event_selection).clone();
+                self.play_sound(|a, s| a.play(&params, s));
+            }
+            KeyCode::Char('s') => {
+                let _ = self.settings.save();
+                self.message = String::from("Sound settings saved!");
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                let _ = self.settings.save();
+                self.screen = Screen::SoundSettings;
+                self.message = String::from("Select a sound event to edit");
+            }
+            _ => {}
+        }
+    }
+
+    fn adjust_param(&mut self, dir: i8) {
+        let param_sel = self.sound_param_selection;
+        let params = self.get_event_params_mut(self.sound_event_selection);
+        match param_sel {
+            0 => { params.waveform = params.waveform.next(); } // Waveform
+            1 => { params.frequency = (params.frequency + dir as f32 * 10.0).clamp(20.0, 4000.0); }
+            2 => { params.attack = (params.attack + dir as f32 * 0.01).clamp(0.001, 1.0); }
+            3 => { params.decay = (params.decay + dir as f32 * 0.01).clamp(0.01, 1.0); }
+            4 => { params.sustain = (params.sustain + dir as f32 * 0.05).clamp(0.0, 1.0); }
+            5 => { params.release = (params.release + dir as f32 * 0.01).clamp(0.01, 2.0); }
+            6 => { params.volume = (params.volume + dir as f32 * 0.02).clamp(0.0, 1.0); }
+            7 => { params.lfo_rate = (params.lfo_rate + dir as f32 * 0.5).clamp(0.0, 20.0); }
+            8 => { params.lfo_depth = (params.lfo_depth + dir as f32 * 0.02).clamp(0.0, 1.0); }
+            9 => { params.duration_ms = (params.duration_ms as i64 + dir as i64 * 20).clamp(10, 5000) as u64; }
+            _ => {}
         }
     }
 

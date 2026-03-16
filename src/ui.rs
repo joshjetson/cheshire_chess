@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
 use crate::app::{App, Screen};
 use crate::board;
 use crate::canvas::{CanvasMode, PIECE_TYPES, SHAPE_PALETTE};
+use crate::settings::{SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 
 // Cheshire Cat purple theme
 const LIGHT_SQ: Color = Color::Rgb(200, 170, 220); // soft lavender
@@ -75,6 +76,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::RoomBrowser => draw_room_browser(frame, app),
         Screen::RoomLobby => draw_room_lobby(frame, app),
         Screen::LiveGame => draw_live_game(frame, app),
+        Screen::Settings => draw_settings(frame, app),
+        Screen::SoundSettings => draw_sound_settings(frame, app),
+        Screen::SoundEventEdit => draw_sound_event_edit(frame, app),
+        Screen::NameEdit => draw_name_edit(frame, app),
     }
 }
 
@@ -324,40 +329,9 @@ impl Widget for BoardWidget<'_> {
                     let piece_style = Style::default().fg(fg).bg(bg);
 
                     if let Some(custom_grid) = self.custom_pieces.get(pt) {
-                        // First pass: draw the piece
                         for (row, grid_row) in custom_grid.iter().enumerate() {
                             let line: String = grid_row.iter().collect();
                             buf.set_string(x, y_top + row as u16, &line, piece_style);
-                        }
-                        // Second pass: add ░ halo around filled cells
-                        let halo_fg = match color {
-                            board::Color::White => Color::Rgb(180, 170, 190),
-                            board::Color::Black => Color::Rgb(70, 60, 80),
-                        };
-                        let halo_style = Style::default().fg(halo_fg).bg(bg);
-                        for row in 0..3i16 {
-                            for col in 0..7i16 {
-                                if custom_grid[row as usize][col as usize] != ' ' {
-                                    continue;
-                                }
-                                // Check if any neighbor is non-space
-                                let has_neighbor = [(-1,0),(1,0),(0,-1),(0,1)]
-                                    .iter()
-                                    .any(|&(dr, dc)| {
-                                        let nr = row + dr;
-                                        let nc = col + dc;
-                                        nr >= 0 && nr < 3 && nc >= 0 && nc < 7
-                                            && custom_grid[nr as usize][nc as usize] != ' '
-                                    });
-                                if has_neighbor {
-                                    buf.set_string(
-                                        x + col as u16,
-                                        y_top + row as u16,
-                                        "░",
-                                        halo_style,
-                                    );
-                                }
-                            }
                         }
                     } else {
                         let art = piece_art(pt);
@@ -791,4 +765,115 @@ fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
         .style(input_style)
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(input, chat_layout[1]);
+}
+
+// ── Settings Screens ───────────────────────────────────────────────
+
+fn draw_settings(frame: &mut Frame, app: &App) {
+    let chunks = standard_layout(frame);
+    draw_title(frame, chunks[0]);
+
+    let items: Vec<ListItem> = SETTINGS_ITEMS.iter().enumerate().map(|(i, &item)| {
+        let style = if i == app.settings_selection {
+            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(200, 180, 220))
+        };
+        let prefix = if i == app.settings_selection { " > " } else { "   " };
+        let detail = match i {
+            0 => format!("  [{}]", app.settings.player_name),
+            1 => {
+                let state = if app.settings.sound.enabled { "on" } else { "off" };
+                format!("  [{}]", state)
+            }
+            _ => String::new(),
+        };
+        ListItem::new(format!("{prefix}{item}{detail}")).style(style)
+    }).collect();
+
+    let list = List::new(items).block(
+        Block::default().borders(Borders::ALL).title("Settings"),
+    );
+    frame.render_widget(list, chunks[1]);
+    draw_status(frame, chunks[2], &app.message);
+}
+
+fn draw_name_edit(frame: &mut Frame, app: &App) {
+    let chunks = standard_layout(frame);
+    draw_title(frame, chunks[0]);
+
+    let text = format!(
+        "\n  Player Name:\n\n  > {}_\n\n  Enter to save, Esc to cancel",
+        app.name_input
+    );
+    let para = Paragraph::new(text).block(
+        Block::default().borders(Borders::ALL).title("Edit Name"),
+    );
+    frame.render_widget(para, chunks[1]);
+    draw_status(frame, chunks[2], &app.message);
+}
+
+fn draw_sound_settings(frame: &mut Frame, app: &App) {
+    let chunks = standard_layout(frame);
+    draw_title(frame, chunks[0]);
+
+    let items: Vec<ListItem> = SOUND_EVENT_NAMES.iter().enumerate().map(|(i, &name)| {
+        let style = if i == app.sound_event_selection {
+            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(200, 180, 220))
+        };
+        let prefix = if i == app.sound_event_selection { " > " } else { "   " };
+        let params = app.get_event_params(i);
+        ListItem::new(format!("{prefix}{name}  ({} {}Hz {}ms)",
+            params.waveform.name(), params.frequency as u32, params.duration_ms
+        )).style(style)
+    }).collect();
+
+    let mute = if app.settings.sound.enabled { "" } else { " [MUTED]" };
+    let list = List::new(items).block(
+        Block::default().borders(Borders::ALL)
+            .title(format!("Sound Events{mute} — Enter=edit, [m]ute toggle, Esc=back")),
+    );
+    frame.render_widget(list, chunks[1]);
+    draw_status(frame, chunks[2], &app.message);
+}
+
+fn draw_sound_event_edit(frame: &mut Frame, app: &App) {
+    let chunks = standard_layout(frame);
+    draw_title(frame, chunks[0]);
+
+    let params = app.get_event_params(app.sound_event_selection);
+    let event_name = SOUND_EVENT_NAMES[app.sound_event_selection];
+
+    let values: Vec<String> = vec![
+        params.waveform.name().to_string(),
+        format!("{:.0} Hz", params.frequency),
+        format!("{:.3} s", params.attack),
+        format!("{:.3} s", params.decay),
+        format!("{:.2}", params.sustain),
+        format!("{:.3} s", params.release),
+        format!("{:.2}", params.volume),
+        format!("{:.1} Hz", params.lfo_rate),
+        format!("{:.2}", params.lfo_depth),
+        format!("{} ms", params.duration_ms),
+    ];
+
+    let items: Vec<ListItem> = SYNTH_PARAM_NAMES.iter().enumerate().map(|(i, &name)| {
+        let style = if i == app.sound_param_selection {
+            Style::default().fg(Color::Rgb(255, 200, 255)).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Rgb(200, 180, 220))
+        };
+        let prefix = if i == app.sound_param_selection { " > " } else { "   " };
+        let arrow = if i == app.sound_param_selection { "  <  >  " } else { "        " };
+        ListItem::new(format!("{prefix}{name:<12} {:<12}{arrow}", values[i])).style(style)
+    }).collect();
+
+    let list = List::new(items).block(
+        Block::default().borders(Borders::ALL)
+            .title(format!("{event_name} — left/right to adjust, [p]review, [s]ave, Esc=back")),
+    );
+    frame.render_widget(list, chunks[1]);
+    draw_status(frame, chunks[2], &app.message);
 }
