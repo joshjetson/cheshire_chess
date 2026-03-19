@@ -4,10 +4,11 @@ use std::sync::mpsc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::audio::Audio;
-use crate::board::{Move, Position};
+use crate::board::{Color, Move, Position, QUEEN};
 use crate::canvas::{CanvasMode, CanvasState, CustomPieces, PIECE_TYPES, SHAPE_PALETTE};
 use crate::net::NetClient;
 use crate::protocol::*;
+use crate::engine::{self, Personality, PERSONALITIES};
 use crate::lessons::STUDY_CATEGORIES;
 use crate::minigames::{KnightTour, ColorQuiz, MINIGAME_LIST};
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
@@ -37,6 +38,8 @@ pub enum Screen {
     MiniGameMenu,
     KnightTourGame,
     ColorQuizGame,
+    ComputerSelect,
+    ComputerGame,
 }
 
 pub struct ChatState {
@@ -121,9 +124,15 @@ pub struct App {
     pub minigame_selection: usize,
     pub knight_tour: Option<KnightTour>,
     pub color_quiz: Option<ColorQuiz>,
+    // Computer game
+    pub computer_selection: usize,
+    pub computer_personality: Option<Personality>,
+    pub player_color: Color,
+    pub computer_thinking: bool,
 }
 
 const MENU_ITEMS: &[&str] = &[
+    "Play Computer",
     "Practice Tactics",
     "Study",
     "Mini-Games",
@@ -193,6 +202,10 @@ impl App {
             minigame_selection: 0,
             knight_tour: None,
             color_quiz: None,
+            computer_selection: 0,
+            computer_personality: None,
+            player_color: Color::White,
+            computer_thinking: false,
         }
     }
 
@@ -263,6 +276,13 @@ impl App {
             Screen::StudyMenu => format!("{focus_label} jk=navigate Enter=select Esc=back"),
             Screen::LessonList => format!("{focus_label} jk=navigate Enter=start Esc=back"),
             Screen::LessonView => format!("{focus_label} n/Space=next b/Bksp=back Esc=list"),
+            Screen::ComputerSelect => format!("{focus_label} jk=navigate Enter=play Esc=back"),
+            Screen::ComputerGame => {
+                match self.focus {
+                    Focus::Board => format!("{focus_label} hjkl=move Enter=select/move Esc=back"),
+                    Focus::Panel => format!("{focus_label} Tab=board Esc=back"),
+                }
+            }
             Screen::MiniGameMenu => format!("{focus_label} jk=navigate Enter=play Esc=back"),
             Screen::KnightTourGame => format!("{focus_label} hjkl=move Enter=place knight b=undo Esc=quit"),
             Screen::ColorQuizGame => format!("l=light d=dark Esc=quit"),
@@ -586,6 +606,11 @@ impl App {
                     Screen::LiveGame => {
                         if self.is_my_turn() { self.handle_live_game_select(); }
                     }
+                    Screen::ComputerGame => {
+                        if self.board.side_to_move == self.player_color && !self.computer_thinking {
+                            self.handle_computer_move_select();
+                        }
+                    }
                     Screen::KnightTourGame => {
                         let result = if let Some(ref mut tour) = self.knight_tour {
                             let sq = self.cursor;
@@ -707,6 +732,8 @@ impl App {
             Screen::StudyMenu => self.handle_study_menu_key(key),
             Screen::LessonList => self.handle_lesson_list_key(key),
             Screen::LessonView => self.handle_lesson_view_panel_key(key),
+            Screen::ComputerSelect => self.handle_computer_select_key(key),
+            Screen::ComputerGame => self.handle_computer_game_panel_key(key),
             Screen::MiniGameMenu => self.handle_minigame_menu_key(key),
             Screen::ColorQuizGame => self.handle_color_quiz_key(key),
             Screen::KnightTourGame => {
@@ -832,30 +859,36 @@ impl App {
     fn menu_select(&mut self, idx: usize) {
         match idx {
             0 => {
+                    self.computer_selection = 0;
+                    self.screen = Screen::ComputerSelect;
+                    self.focus = Focus::Panel;
+                    self.message = String::from("Choose your opponent");
+                }
+                1 => {
                     self.screen = Screen::ThemePicker;
                     self.theme_selection = 0;
                     self.focus = Focus::Panel;
                     self.message = String::from("Pick a tactic theme");
                 }
-                1 => {
+                2 => {
                     self.study_category = 0;
                     self.screen = Screen::StudyMenu;
                     self.focus = Focus::Panel;
                     self.message = String::from("Choose what to study");
                 }
-                2 => {
+                3 => {
                     self.minigame_selection = 0;
                     self.screen = Screen::MiniGameMenu;
                     self.focus = Focus::Panel;
                     self.message = String::from("Choose a mini-game");
                 }
-                3 => {
+                4 => {
                     self.board = Position::start();
                     self.selected_sq = None;
                     self.highlights.clear();
                     self.message = String::from("Move pieces freely. Tab=menu, Enter=select/place.");
                 }
-                4 => {
+                5 => {
                     // Go Online — connect to central game server
                     if self.net.is_some() {
                         self.send_net(ClientMsg::ListRooms);
@@ -876,12 +909,12 @@ impl App {
                         }
                     }
                 }
-                5 => {
+                6 => {
                     self.settings_selection = 0;
                     self.screen = Screen::Settings;
                     self.message = String::from("Settings");
                 }
-                6 => { self.running = false; }
+                7 => { self.running = false; }
                 _ => {}
         }
     }
@@ -1170,6 +1203,149 @@ impl App {
             let us_color = self.board.side_to_move;
             if let Some((_, color)) = self.board.piece_at(sq) {
                 if color == us_color { self.select_piece(sq); }
+            }
+        }
+    }
+
+    // ── Computer Game ──────────────────────────────────────────────
+
+    fn handle_computer_select_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.computer_selection > 0 { self.computer_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.computer_selection < PERSONALITIES.len() - 1 { self.computer_selection += 1; }
+            }
+            KeyCode::Enter => {
+                let personality = PERSONALITIES[self.computer_selection].clone();
+                self.board = Position::start();
+                self.selected_sq = None;
+                self.highlights.clear();
+                self.cursor = 28;
+                self.player_color = Color::White;
+                self.computer_thinking = false;
+                let name = personality.name;
+                self.computer_personality = Some(personality);
+                self.screen = Screen::ComputerGame;
+                self.focus = Focus::Board;
+                self.message = format!("Playing as White vs {name}. Your move!");
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::Menu;
+                self.update_hint();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_computer_game_panel_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Esc {
+            self.computer_personality = None;
+            self.screen = Screen::Menu;
+            self.board = Position::start();
+            self.update_hint();
+        }
+    }
+
+    fn handle_computer_move_select(&mut self) {
+        let sq = self.cursor;
+        if let Some(from) = self.selected_sq {
+            if from == sq {
+                self.selected_sq = None;
+                self.highlights.clear();
+                return;
+            }
+            let legal_moves = self.board.legal_moves();
+            let mv = legal_moves.iter().find(|m| {
+                m.from == from && m.to == sq
+                    && (m.promotion.is_none() || m.promotion == Some(QUEEN))
+            });
+            if let Some(&mv) = mv {
+                // Play the move
+                let is_capture = self.board.piece_at(mv.to).is_some();
+                self.board = self.board.make_move(mv);
+                self.selected_sq = None;
+                self.highlights.clear();
+
+                if is_capture {
+                    self.play_sound(|a, s| a.play_capture(s));
+                } else {
+                    self.play_sound(|a, s| a.play_move(s));
+                }
+
+                // Check game over
+                if self.board.is_checkmate() {
+                    self.play_sound(|a, s| a.play_checkmate(s));
+                    self.message = String::from("Checkmate! You win!");
+                    self.computer_personality = None;
+                    return;
+                }
+                if self.board.is_stalemate() {
+                    self.message = String::from("Stalemate! Draw.");
+                    self.computer_personality = None;
+                    return;
+                }
+                if self.board.in_check(self.board.side_to_move) {
+                    self.play_sound(|a, s| a.play_check(s));
+                }
+
+                // Computer's turn
+                self.computer_thinking = true;
+                self.message = String::from("Computer is thinking...");
+            } else {
+                // Maybe selecting a different piece
+                if let Some((_, color)) = self.board.piece_at(sq) {
+                    if color == self.player_color {
+                        self.select_piece(sq);
+                        return;
+                    }
+                }
+            }
+        } else {
+            if let Some((_, color)) = self.board.piece_at(sq) {
+                if color == self.player_color {
+                    self.select_piece(sq);
+                }
+            }
+        }
+    }
+
+    /// Called from the event loop to let the computer make its move.
+    pub fn computer_think(&mut self) {
+        if !self.computer_thinking { return; }
+        if self.computer_personality.is_none() { return; }
+
+        let personality = self.computer_personality.as_ref().unwrap();
+        if let Some(mv) = engine::find_best_move(&self.board, personality) {
+            let is_capture = self.board.piece_at(mv.to).is_some();
+            self.board = self.board.make_move(mv);
+
+            if is_capture {
+                self.play_sound(|a, s| a.play_capture(s));
+            } else {
+                self.play_sound(|a, s| a.play_move(s));
+            }
+
+            self.computer_thinking = false;
+
+            if self.board.is_checkmate() {
+                self.play_sound(|a, s| a.play_checkmate(s));
+                let name = personality.name;
+                self.message = format!("Checkmate! {name} wins.");
+                self.computer_personality = None;
+                return;
+            }
+            if self.board.is_stalemate() {
+                self.message = String::from("Stalemate! Draw.");
+                self.computer_personality = None;
+                return;
+            }
+            if self.board.in_check(self.board.side_to_move) {
+                self.play_sound(|a, s| a.play_check(s));
+                self.message = String::from("Check! Your move.");
+            } else {
+                self.message = String::from("Your move!");
             }
         }
     }

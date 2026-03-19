@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
 use crate::app::{App, Screen};
 use crate::board;
 use crate::canvas::{CanvasMode, PIECE_TYPES, SHAPE_PALETTE};
+use crate::engine::PERSONALITIES;
 use crate::lessons::STUDY_CATEGORIES;
 use crate::minigames::MINIGAME_LIST;
 use crate::settings::{SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
@@ -141,6 +142,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::StudyMenu => draw_right_study_menu(frame, app, main[1]),
         Screen::LessonList => draw_right_lesson_list(frame, app, main[1]),
         Screen::LessonView => draw_right_lesson_view(frame, app, main[1]),
+        Screen::ComputerSelect => draw_right_computer_select(frame, app, main[1]),
+        Screen::ComputerGame => draw_right_computer_game(frame, app, main[1]),
         Screen::MiniGameMenu => draw_right_minigame_menu(frame, app, main[1]),
         Screen::KnightTourGame => draw_right_knight_tour(frame, app, main[1]),
         Screen::ColorQuizGame => draw_right_color_quiz(frame, app, main[1]),
@@ -823,6 +826,57 @@ fn draw_right_lesson_view(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(text)
             .style(Style::default().fg(Color::Rgb(200, 180, 220)))
             .block(Block::default().borders(Borders::ALL).title("Lesson")),
+        area,
+    );
+}
+
+// ── Computer Game Screens ──────────────────────────────────────────
+
+fn draw_right_computer_select(frame: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = PERSONALITIES.iter().enumerate().map(|(i, p)| {
+        ListItem::new(format!("{}{}\n      {}", prefix(i == app.computer_selection), p.name, p.description))
+            .style(list_style(i == app.computer_selection))
+    }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Choose Opponent")), area);
+}
+
+fn draw_right_computer_game(frame: &mut Frame, app: &App, area: Rect) {
+    let mut text = String::new();
+    if let Some(ref p) = app.computer_personality {
+        let your_color = if app.player_color == crate::board::Color::White { "White" } else { "Black" };
+        let turn = match app.board.side_to_move {
+            crate::board::Color::White => "White",
+            crate::board::Color::Black => "Black",
+        };
+        let your_turn = app.board.side_to_move == app.player_color;
+        let in_check = app.board.in_check(app.board.side_to_move);
+
+        text.push_str(&format!("  vs {}\n  {}\n\n", p.name, p.description));
+        text.push_str(&format!("  You: {your_color}\n"));
+        text.push_str(&format!("  Turn: {turn}\n"));
+        if in_check { text.push_str("  CHECK!\n"); }
+        text.push('\n');
+        if app.computer_thinking {
+            text.push_str("  Thinking...\n");
+        } else if your_turn {
+            text.push_str("  YOUR MOVE\n");
+        } else {
+            text.push_str("  Waiting...\n");
+        }
+    } else {
+        text.push_str("  Game over.\n  Esc to return.\n");
+    }
+    text.push_str("\n  Esc=quit game");
+
+    let style = if app.board.side_to_move == app.player_color && !app.computer_thinking {
+        Style::default().fg(Color::Rgb(255, 220, 150))
+    } else {
+        Style::default().fg(Color::Rgb(200, 180, 220))
+    };
+
+    frame.render_widget(
+        Paragraph::new(text).style(style)
+            .block(Block::default().borders(Borders::ALL).title("Game")),
         area,
     );
 }

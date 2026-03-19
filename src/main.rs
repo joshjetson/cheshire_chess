@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod board;
 mod canvas;
+mod engine;
 mod identity;
 mod lessons;
 mod minigames;
@@ -88,6 +89,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool)
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
         app.poll_network();
+        app.computer_think();
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
