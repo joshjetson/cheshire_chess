@@ -45,6 +45,10 @@ struct GameTable {
     spectators: Vec<u32>,
     position: Position,
     game_active: bool,
+    time_control: TimeControl,
+    white_time_ms: u64,
+    black_time_ms: u64,
+    last_move_time: std::time::Instant,
 }
 
 impl ServerState {
@@ -110,6 +114,7 @@ impl ServerState {
             black: table.black.map(&player_ref),
             spectator_count: table.spectators.len() as u32,
             has_game: table.game_active,
+            time_control: table.time_control,
         }
     }
 
@@ -183,7 +188,7 @@ impl ServerState {
             }
             ClientMsg::LeaveRoom => { self.leave_room(pid); }
 
-            ClientMsg::CreateTable => {
+            ClientMsg::CreateTable { time_control } => {
                 let room_id = match self.players.get(&pid).and_then(|p| p.room_id) {
                     Some(r) => r,
                     None => return,
@@ -194,6 +199,10 @@ impl ServerState {
                 };
                 let table_id = room.next_table_id;
                 room.next_table_id += 1;
+                let initial_time = match time_control {
+                    TimeControl::None => 0,
+                    TimeControl::Minutes(m) => m as u64 * 60 * 1000,
+                };
                 let table = GameTable {
                     id: table_id,
                     white: Some(pid),
@@ -201,6 +210,10 @@ impl ServerState {
                     spectators: Vec::new(),
                     position: Position::start(),
                     game_active: false,
+                    time_control,
+                    white_time_ms: initial_time,
+                    black_time_ms: initial_time,
+                    last_move_time: std::time::Instant::now(),
                 };
                 let info = Self::table_info(&table, &self.players);
                 room.tables.insert(table_id, table);
@@ -253,19 +266,31 @@ impl ServerState {
                 if table.white.is_some() && table.black.is_some() && !table.game_active {
                     let white = table.white.unwrap();
                     let black = table.black.unwrap();
-                    // Start game
                     let room = self.rooms.get_mut(&room_id).unwrap();
                     let table = room.tables.get_mut(&table_id).unwrap();
                     table.game_active = true;
                     table.position = Position::start();
+                    table.last_move_time = std::time::Instant::now();
+                    // Reset clocks
+                    let initial = match table.time_control {
+                        TimeControl::None => 0,
+                        TimeControl::Minutes(m) => m as u64 * 60 * 1000,
+                    };
+                    table.white_time_ms = initial;
+                    table.black_time_ms = initial;
                     let fen = position_to_fen(&table.position);
+                    let tc = table.time_control;
 
                     self.broadcast_room(room_id, ServerMsg::GameStarted {
-                        table_id, white, black, fen,
+                        table_id, white, black, fen, time_control: tc,
                     }, None);
                     let wname = self.player_name(white);
                     let bname = self.player_name(black);
-                    self.system_chat(room_id, format!("{wname} vs {bname} — game started!"));
+                    let tc_str = match tc {
+                        TimeControl::None => String::from("no clock"),
+                        TimeControl::Minutes(m) => format!("{m} min"),
+                    };
+                    self.system_chat(room_id, format!("{wname} vs {bname} — {tc_str} game started!"));
                 }
             }
             ClientMsg::LeaveTable => { self.leave_table(pid); }
@@ -281,33 +306,57 @@ impl ServerState {
                     let table = match room.tables.get_mut(&table_id) { Some(t) => t, None => return };
 
                     if !table.game_active {
-                        Err("No active game")
+                        Err("No active game".to_string())
                     } else {
                         let is_white = table.position.side_to_move == board::Color::White;
                         let correct = (is_white && table.white == Some(pid))
                             || (!is_white && table.black == Some(pid));
                         if !correct {
-                            Err("Not your turn")
-                        } else if let Some(mv) = Move::from_uci(&uci) {
-                            let legal = table.position.legal_moves();
-                            if legal.iter().any(|m| m.from == mv.from && m.to == mv.to && m.promotion == mv.promotion) {
-                                table.position = table.position.make_move(mv);
-                                let fen = position_to_fen(&table.position);
-                                let checkmate = table.position.is_checkmate();
-                                let stalemate = table.position.is_stalemate();
-                                Ok((fen, checkmate, stalemate))
-                            } else {
-                                Err("Illegal move")
-                            }
+                            Err("Not your turn".to_string())
                         } else {
-                            Err("Bad move format")
+                            // Update clock: deduct time from the player who just moved
+                            let now = std::time::Instant::now();
+                            let elapsed = now.duration_since(table.last_move_time).as_millis() as u64;
+                            if table.time_control != TimeControl::None {
+                                if is_white {
+                                    table.white_time_ms = table.white_time_ms.saturating_sub(elapsed);
+                                } else {
+                                    table.black_time_ms = table.black_time_ms.saturating_sub(elapsed);
+                                }
+                                // Check for timeout
+                                if (is_white && table.white_time_ms == 0) || (!is_white && table.black_time_ms == 0) {
+                                    let winner = if is_white { table.black } else { table.white };
+                                    table.game_active = false;
+                                    return self.flag_timeout(room_id, table_id, winner);
+                                }
+                            }
+                            table.last_move_time = now;
+
+                            if let Some(mv) = Move::from_uci(&uci) {
+                                let legal = table.position.legal_moves();
+                                if legal.iter().any(|m| m.from == mv.from && m.to == mv.to && m.promotion == mv.promotion) {
+                                    table.position = table.position.make_move(mv);
+                                    let fen = position_to_fen(&table.position);
+                                    let checkmate = table.position.is_checkmate();
+                                    let stalemate = table.position.is_stalemate();
+                                    let wt = table.white_time_ms;
+                                    let bt = table.black_time_ms;
+                                    Ok((fen, checkmate, stalemate, wt, bt))
+                                } else {
+                                    Err("Illegal move".to_string())
+                                }
+                            } else {
+                                Err("Bad move format".to_string())
+                            }
                         }
                     }
                 };
 
                 match result {
-                    Ok((fen, checkmate, stalemate)) => {
-                        self.broadcast_room(room_id, ServerMsg::MoveMade { table_id, uci, fen }, None);
+                    Ok((fen, checkmate, stalemate, wt, bt)) => {
+                        self.broadcast_room(room_id, ServerMsg::MoveMade {
+                            table_id, uci, fen, white_time_ms: wt, black_time_ms: bt,
+                        }, None);
                         if checkmate {
                             self.broadcast_room(room_id, ServerMsg::GameOver {
                                 table_id, reason: "Checkmate".into(), winner: Some(pid),
@@ -369,21 +418,27 @@ impl ServerState {
                     } else { false };
 
                     if should_start {
-                        // Swap colors for the rematch
-                        let (white, black) = if let Some(room) = self.rooms.get_mut(&room_id) {
+                        let (white, black, tc) = if let Some(room) = self.rooms.get_mut(&room_id) {
                             if let Some(table) = room.tables.get_mut(&table_id) {
                                 let old_white = table.white;
                                 table.white = table.black;
                                 table.black = old_white;
                                 table.game_active = true;
                                 table.position = Position::start();
-                                (table.white.unwrap(), table.black.unwrap())
+                                table.last_move_time = std::time::Instant::now();
+                                let initial = match table.time_control {
+                                    TimeControl::None => 0,
+                                    TimeControl::Minutes(m) => m as u64 * 60 * 1000,
+                                };
+                                table.white_time_ms = initial;
+                                table.black_time_ms = initial;
+                                (table.white.unwrap(), table.black.unwrap(), table.time_control)
                             } else { return; }
                         } else { return; };
 
                         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string();
                         self.broadcast_room(room_id, ServerMsg::GameStarted {
-                            table_id, white, black, fen,
+                            table_id, white, black, fen, time_control: tc,
                         }, None);
                         let wname = self.player_name(white);
                         let bname = self.player_name(black);
@@ -414,6 +469,13 @@ impl ServerState {
     fn player_location(&self, pid: u32) -> Option<(u32, u32)> {
         let p = self.players.get(&pid)?;
         Some((p.room_id?, p.table_id?))
+    }
+
+    fn flag_timeout(&mut self, room_id: u32, table_id: u32, winner: Option<u32>) {
+        self.broadcast_room(room_id, ServerMsg::GameOver {
+            table_id, reason: "Time ran out".into(), winner,
+        }, None);
+        self.end_game(room_id, table_id);
     }
 
     fn end_game(&mut self, room_id: u32, table_id: u32) {

@@ -12,9 +12,9 @@ pub enum ClientMsg {
     LeaveRoom,
 
     // Game tables within a room
-    CreateTable,                         // create a table, wait for opponent
-    JoinTable { table_id: u32 },         // sit down to play or spectate
-    LeaveTable,                          // stand up from table
+    CreateTable { time_control: TimeControl },
+    JoinTable { table_id: u32 },
+    LeaveTable,
 
     // Moves (applies to whichever table you're at)
     MakeMove { uci: String },
@@ -52,8 +52,8 @@ pub enum ServerMsg {
     TableJoined { table: TableInfo, fen: String },
 
     // Game events (within a table)
-    GameStarted { table_id: u32, white: u32, black: u32, fen: String },
-    MoveMade { table_id: u32, uci: String, fen: String },
+    GameStarted { table_id: u32, white: u32, black: u32, fen: String, time_control: TimeControl },
+    MoveMade { table_id: u32, uci: String, fen: String, white_time_ms: u64, black_time_ms: u64 },
     GameOver { table_id: u32, reason: String, winner: Option<u32> },
 
     // Main board
@@ -94,6 +94,13 @@ pub struct TableInfo {
     pub black: Option<PlayerRef>,
     pub spectator_count: u32,
     pub has_game: bool,
+    pub time_control: TimeControl,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum TimeControl {
+    None,
+    Minutes(u32), // 5, 10, 20, 30
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

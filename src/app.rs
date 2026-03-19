@@ -32,6 +32,7 @@ pub enum Screen {
     SoundEventEdit,
     NameEdit,
     RoomNameInput,
+    TimeControlSelect,
     StudyMenu,
     LessonList,
     LessonView,
@@ -43,14 +44,15 @@ pub enum Screen {
 }
 
 pub struct ChatState {
-    pub messages: Vec<(String, String, ChatKind)>, // (sender, body, kind)
+    pub messages: Vec<(String, String, ChatKind)>,
     pub input: String,
-    pub typing: bool, // is the user typing in chat?
+    pub typing: bool,
+    pub scroll: usize, // 0 = bottom (newest), >0 = scrolled up
 }
 
 impl ChatState {
     fn new() -> Self {
-        Self { messages: Vec::new(), input: String::new(), typing: false }
+        Self { messages: Vec::new(), input: String::new(), typing: false, scroll: 0 }
     }
 }
 
@@ -99,6 +101,13 @@ pub struct App {
     pub live_white: Option<u32>,
     pub live_black: Option<u32>,
     pub game_active: bool,
+    pub last_move: Option<(u8, u8)>,
+    pub move_history: Vec<String>,
+    pub flipped: bool,
+    pub white_time_ms: u64,
+    pub black_time_ms: u64,
+    pub time_control: TimeControl,
+    pub time_control_selection: usize,
     // Discovery (reserved for future LAN mode)
     #[allow(dead_code)]
     pub remote_servers: Vec<RemoteServer>,
@@ -184,6 +193,13 @@ impl App {
             live_white: None,
             live_black: None,
             game_active: false,
+            last_move: None,
+            move_history: Vec::new(),
+            flipped: false,
+            white_time_ms: 0,
+            black_time_ms: 0,
+            time_control: TimeControl::None,
+            time_control_selection: 0,
             remote_servers: Vec::new(),
             heartbeat_tx: None,
             public_ip: None,
@@ -273,6 +289,7 @@ impl App {
             Screen::SoundEventEdit => format!("{focus_label} jk=param hl=adjust p=preview s=save Esc=back"),
             Screen::NameEdit => format!("Type name, Enter=save, Esc=cancel"),
             Screen::RoomNameInput => format!("Type room name, Enter=create, Esc=cancel"),
+            Screen::TimeControlSelect => format!("jk=navigate Enter=select Esc=cancel"),
             Screen::StudyMenu => format!("{focus_label} jk=navigate Enter=select Esc=back"),
             Screen::LessonList => format!("{focus_label} jk=navigate Enter=start Esc=back"),
             Screen::LessonView => format!("{focus_label} n/Space=next b/Bksp=back Esc=list"),
@@ -410,16 +427,31 @@ impl App {
                     self.message = String::from("Waiting for opponent to join...");
                 }
             }
-            ServerMsg::GameStarted { table_id, white, black, fen } => {
+            ServerMsg::GameStarted { table_id, white, black, fen, time_control } => {
                 self.live_white = Some(white);
                 self.live_black = Some(black);
                 self.game_active = true;
+                self.last_move = None;
+                self.move_history.clear();
+                self.time_control = time_control;
+                let initial = match time_control {
+                    TimeControl::None => 0,
+                    TimeControl::Minutes(m) => m as u64 * 60 * 1000,
+                };
+                self.white_time_ms = initial;
+                self.black_time_ms = initial;
                 if let Some(pos) = Position::from_fen(&fen) {
                     self.board = pos;
                 }
                 self.selected_sq = None;
                 self.highlights.clear();
-                self.cursor = 28;
+
+                // Flip board if playing black
+                let is_black = Some(black) == self.my_id;
+                self.flipped = is_black;
+                // Start cursor in center from player's perspective
+                self.cursor = if is_black { 35 } else { 28 };
+
                 if self.current_table != Some(table_id) {
                     return;
                 }
@@ -429,15 +461,23 @@ impl App {
 
                 let my_color = if Some(white) == self.my_id {
                     "White — your move!"
-                } else if Some(black) == self.my_id {
+                } else if is_black {
                     "Black — waiting for White"
                 } else {
                     "Spectating"
                 };
                 self.message = format!("Game started! {my_color}");
             }
-            ServerMsg::MoveMade { table_id, uci: _, fen } => {
+            ServerMsg::MoveMade { table_id, uci, fen, white_time_ms, black_time_ms } => {
                 if self.current_table == Some(table_id) {
+                    // Track last move for highlighting
+                    if let Some(mv) = Move::from_uci(&uci) {
+                        self.last_move = Some((mv.from, mv.to));
+                    }
+                    self.move_history.push(uci);
+                    self.white_time_ms = white_time_ms;
+                    self.black_time_ms = black_time_ms;
+
                     if let Some(pos) = Position::from_fen(&fen) {
                         let is_check = pos.in_check(pos.side_to_move);
                         if is_check {
@@ -524,6 +564,7 @@ impl App {
         match self.screen {
             Screen::NameEdit => { self.handle_name_edit_key(key); return; }
             Screen::RoomNameInput => { self.handle_room_name_input_key(key); return; }
+            Screen::TimeControlSelect => { self.handle_time_control_select_key(key); return; }
             _ => {}
         }
 
@@ -534,13 +575,27 @@ impl App {
                     if !self.chat.input.is_empty() {
                         let body = self.chat.input.clone();
                         self.chat.input.clear();
+                        self.chat.scroll = 0; // snap to bottom on send
                         self.send_net(ClientMsg::SendChat { body });
                     }
                 }
                 KeyCode::Char(c) => { self.chat.input.push(c); }
                 KeyCode::Backspace => { self.chat.input.pop(); }
+                KeyCode::Up => {
+                    // Scroll chat up
+                    if self.chat.scroll < self.chat.messages.len() {
+                        self.chat.scroll += 1;
+                    }
+                }
+                KeyCode::Down => {
+                    // Scroll chat down
+                    if self.chat.scroll > 0 {
+                        self.chat.scroll -= 1;
+                    }
+                }
                 KeyCode::Esc => {
                     self.chat.typing = false;
+                    self.chat.scroll = 0;
                     self.update_hint();
                 }
                 _ => {}
@@ -803,7 +858,9 @@ impl App {
                 }
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
-                self.send_net(ClientMsg::CreateTable);
+                self.time_control_selection = 0;
+                self.screen = Screen::TimeControlSelect;
+                self.message = String::from("Select time control for your table");
             }
             KeyCode::Enter => {
                 if let Some(table) = self.tables.get(self.table_selection) {
@@ -1170,6 +1227,35 @@ impl App {
             KeyCode::Esc => {
                 self.screen = Screen::RoomBrowser;
                 self.message = String::from("[n]ew room, [r]efresh, Enter=join");
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_time_control_select_key(&mut self, key: KeyEvent) {
+        const OPTIONS: &[(&str, TimeControl)] = &[
+            ("No Clock (unlimited)", TimeControl::None),
+            ("5 Minutes", TimeControl::Minutes(5)),
+            ("10 Minutes", TimeControl::Minutes(10)),
+            ("20 Minutes", TimeControl::Minutes(20)),
+            ("30 Minutes", TimeControl::Minutes(30)),
+        ];
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.time_control_selection > 0 { self.time_control_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.time_control_selection < OPTIONS.len() - 1 { self.time_control_selection += 1; }
+            }
+            KeyCode::Enter => {
+                let (name, tc) = OPTIONS[self.time_control_selection];
+                self.send_net(ClientMsg::CreateTable { time_control: tc });
+                self.screen = Screen::RoomLobby;
+                self.message = format!("Creating {name} table...");
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::RoomLobby;
+                self.update_hint();
             }
             _ => {}
         }

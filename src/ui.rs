@@ -121,7 +121,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         custom_pieces: &app.custom_pieces,
         selected_sq: app.selected_sq,
         highlights: &app.highlights,
+        last_move: app.last_move,
         focused: app.focus == crate::app::Focus::Board,
+        flipped: app.flipped,
     };
     frame.render_widget(board_widget, main[0]);
 
@@ -133,6 +135,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Results => draw_right_results(frame, app, main[1]),
         Screen::RoomBrowser => draw_right_room_browser(frame, app, main[1]),
         Screen::RoomNameInput => draw_right_room_name_input(frame, app, main[1]),
+        Screen::TimeControlSelect => draw_right_time_control(frame, app, main[1]),
         Screen::RoomLobby => draw_right_room_lobby(frame, app, main[1]),
         Screen::LiveGame => draw_right_live_game(frame, app, main[1]),
         Screen::Settings => draw_right_settings(frame, app, main[1]),
@@ -179,6 +182,7 @@ fn standard_layout(frame: &mut Frame) -> Vec<Rect> {
 
 const SELECTED_SQ: Color = Color::Rgb(120, 200, 120);  // green for selected piece
 const HIGHLIGHT_SQ: Color = Color::Rgb(180, 220, 130); // yellow-green for legal targets
+const LAST_MOVE_SQ: Color = Color::Rgb(170, 160, 100); // muted gold for last move
 
 struct BoardWidget<'a> {
     board: &'a board::Position,
@@ -186,7 +190,9 @@ struct BoardWidget<'a> {
     custom_pieces: &'a crate::canvas::CustomPieces,
     selected_sq: Option<u8>,
     highlights: &'a [u8],
+    last_move: Option<(u8, u8)>,
     focused: bool,
+    flipped: bool,
 }
 
 impl Widget for BoardWidget<'_> {
@@ -203,7 +209,8 @@ impl Widget for BoardWidget<'_> {
         let label_col_width = 2u16;
 
         for display_rank in 0..8u8 {
-            let rank = 7 - display_rank;
+            // When flipped, rank 0 (row 1) is at top, rank 7 (row 8) at bottom
+            let rank = if self.flipped { display_rank } else { 7 - display_rank };
             let y_top = inner.y + display_rank as u16 * SQ_HEIGHT;
 
             if y_top + SQ_HEIGHT > inner.y + inner.height {
@@ -218,9 +225,11 @@ impl Widget for BoardWidget<'_> {
                 Style::default().fg(Color::Rgb(160, 140, 180)),
             );
 
-            for file in 0..8u8 {
+            for display_file in 0..8u8 {
+                // When flipped, file h is on the left, file a on the right
+                let file = if self.flipped { 7 - display_file } else { display_file };
                 let sq = rank * 8 + file;
-                let x = inner.x + label_col_width + file as u16 * SQ_WIDTH;
+                let x = inner.x + label_col_width + display_file as u16 * SQ_WIDTH;
 
                 if x + SQ_WIDTH > inner.x + inner.width {
                     break;
@@ -230,6 +239,7 @@ impl Widget for BoardWidget<'_> {
                 let is_cursor = sq == self.cursor;
                 let is_selected = self.selected_sq == Some(sq);
                 let is_highlight = self.highlights.contains(&sq);
+                let is_last_move = self.last_move.map_or(false, |(from, to)| sq == from || sq == to);
 
                 let bg = if is_cursor {
                     CURSOR_SQ
@@ -237,6 +247,8 @@ impl Widget for BoardWidget<'_> {
                     SELECTED_SQ
                 } else if is_highlight {
                     HIGHLIGHT_SQ
+                } else if is_last_move {
+                    LAST_MOVE_SQ
                 } else if is_light {
                     LIGHT_SQ
                 } else {
@@ -276,8 +288,9 @@ impl Widget for BoardWidget<'_> {
         // File labels
         let label_y = inner.y + 8 * SQ_HEIGHT;
         if label_y < inner.y + inner.height {
-            for file in 0..8u8 {
-                let x = inner.x + label_col_width + file as u16 * SQ_WIDTH + SQ_WIDTH / 2;
+            for display_file in 0..8u8 {
+                let file = if self.flipped { 7 - display_file } else { display_file };
+                let x = inner.x + label_col_width + display_file as u16 * SQ_WIDTH + SQ_WIDTH / 2;
                 if x < inner.x + inner.width {
                     let label = (b'a' + file) as char;
                     buf.set_string(
@@ -612,7 +625,15 @@ fn draw_right_room_lobby(frame: &mut Frame, app: &App, area: Rect) {
             let w = t.white.as_ref().map(|p| p.name.as_str()).unwrap_or("?");
             let b = t.black.as_ref().map(|p| p.name.as_str()).unwrap_or("?");
             let st = if t.has_game { "playing" } else { "waiting" };
-            ListItem::new(format!("{}{w} v {b} [{st}]", prefix(i == app.table_selection)))
+            let tc = match t.time_control {
+                crate::protocol::TimeControl::None => "",
+                crate::protocol::TimeControl::Minutes(5) => " 5m",
+                crate::protocol::TimeControl::Minutes(10) => " 10m",
+                crate::protocol::TimeControl::Minutes(20) => " 20m",
+                crate::protocol::TimeControl::Minutes(30) => " 30m",
+                crate::protocol::TimeControl::Minutes(_) => "",
+            };
+            ListItem::new(format!("{}{w} v {b} [{st}{tc}]", prefix(i == app.table_selection)))
                 .style(list_style(i == app.table_selection))
         }).collect()
     };
@@ -632,7 +653,7 @@ fn draw_right_room_lobby(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
     let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .constraints([Constraint::Length(8), Constraint::Min(4), Constraint::Min(0)])
         .split(area);
 
     // Game info panel
@@ -643,18 +664,18 @@ fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
 
     let my_role = if is_white { "White" } else if is_black { "Black" } else { "Spectating" };
     let turn = match app.board.side_to_move {
-        crate::board::Color::White => "White to move",
-        crate::board::Color::Black => "Black to move",
+        crate::board::Color::White => "White",
+        crate::board::Color::Black => "Black",
     };
     let your_turn = app.game_active && ((is_white && app.board.side_to_move == crate::board::Color::White)
         || (is_black && app.board.side_to_move == crate::board::Color::Black));
 
     let status = if !app.game_active {
-        "Game over"
+        "Game over — r=rematch"
     } else if your_turn {
         "YOUR MOVE"
     } else if is_spectator {
-        turn
+        "Spectating"
     } else {
         "Waiting..."
     };
@@ -662,8 +683,19 @@ fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
     let in_check = app.game_active && app.board.in_check(app.board.side_to_move);
     let check_str = if in_check { " CHECK!" } else { "" };
 
+    // Format clock times
+    let clock_str = if app.time_control != crate::protocol::TimeControl::None {
+        let wm = app.white_time_ms / 60000;
+        let ws = (app.white_time_ms % 60000) / 1000;
+        let bm = app.black_time_ms / 60000;
+        let bs = (app.black_time_ms % 60000) / 1000;
+        format!("\n  W {wm}:{ws:02}  B {bm}:{bs:02}")
+    } else {
+        String::new()
+    };
+
     let info_text = format!(
-        "\n  You: {my_role}\n  {turn}{check_str}\n\n  {status}\n\n  Tab=chat r=resign Esc=leave"
+        "\n  You: {my_role}  Turn: {turn}{check_str}{clock_str}\n  {status}\n\n  Tab=chat r=resign Esc=leave"
     );
 
     let info_style = if your_turn {
@@ -678,8 +710,30 @@ fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
         split[0],
     );
 
-    // Chat below
-    draw_chat_pane(frame, app, split[1]);
+    // Move history
+    let mut move_text = String::new();
+    let moves = &app.move_history;
+    for (i, uci) in moves.iter().enumerate() {
+        if i % 2 == 0 {
+            let move_num = i / 2 + 1;
+            move_text.push_str(&format!(" {move_num}. {uci}"));
+        } else {
+            move_text.push_str(&format!(" {uci}\n"));
+        }
+    }
+    if moves.len() % 2 == 1 {
+        move_text.push('\n');
+    }
+
+    frame.render_widget(
+        Paragraph::new(move_text)
+            .style(Style::default().fg(Color::Rgb(180, 170, 200)))
+            .block(Block::default().borders(Borders::ALL).title("Moves")),
+        split[1],
+    );
+
+    // Chat
+    draw_chat_pane(frame, app, split[2]);
 }
 
 fn draw_chat_pane(frame: &mut Frame, app: &App, area: Rect) {
@@ -690,9 +744,12 @@ fn draw_chat_pane(frame: &mut Frame, app: &App, area: Rect) {
 
     let msg_count = app.chat.messages.len();
     let visible = chat_split[0].height.saturating_sub(2) as usize;
-    let skip = if msg_count > visible { msg_count - visible } else { 0 };
 
-    let items: Vec<ListItem> = app.chat.messages.iter().skip(skip).map(|(sender, body, kind)| {
+    // Support scrolling: scroll=0 means show newest, scroll>0 means scrolled up
+    let bottom = if msg_count > visible { msg_count - visible } else { 0 };
+    let skip = if app.chat.scroll > bottom { 0 } else { bottom - app.chat.scroll };
+
+    let items: Vec<ListItem> = app.chat.messages.iter().skip(skip).take(visible).map(|(sender, body, kind)| {
         let style = match kind {
             crate::protocol::ChatKind::System => Style::default().fg(Color::Rgb(120, 120, 140)),
             crate::protocol::ChatKind::Player => Style::default().fg(Color::Rgb(200, 180, 220)),
@@ -701,9 +758,15 @@ fn draw_chat_pane(frame: &mut Frame, app: &App, area: Rect) {
         let text = if sender.is_empty() { format!("  {body}") } else { format!("  {sender}: {body}") };
         ListItem::new(text).style(style)
     }).collect();
-    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Chat")), chat_split[0]);
 
-    let input_text = if app.chat.typing { format!("> {}_", app.chat.input) } else { String::from("  Tab to chat...") };
+    let scroll_indicator = if app.chat.scroll > 0 {
+        format!("Chat [scrolled {}]", app.chat.scroll)
+    } else {
+        String::from("Chat")
+    };
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(scroll_indicator)), chat_split[0]);
+
+    let input_text = if app.chat.typing { format!("> {}_", app.chat.input) } else { String::from("  Tab=chat  Up/Down=scroll") };
     let input_style = if app.chat.typing { Style::default().fg(Color::White) } else { Style::default().fg(Color::Rgb(100, 90, 110)) };
     frame.render_widget(Paragraph::new(input_text).style(input_style).block(Block::default().borders(Borders::ALL)), chat_split[1]);
 }
@@ -768,6 +831,15 @@ fn draw_right_sound_event_edit(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_right_room_name_input(frame: &mut Frame, app: &App, area: Rect) {
     let text = format!("\n  Room Name:\n\n  > {}_\n\n  Enter=create Esc=cancel", app.room_name_input);
     frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("New Room")), area);
+}
+
+fn draw_right_time_control(frame: &mut Frame, app: &App, area: Rect) {
+    let options = ["No Clock (unlimited)", "5 Minutes", "10 Minutes", "20 Minutes", "30 Minutes"];
+    let items: Vec<ListItem> = options.iter().enumerate().map(|(i, &name)| {
+        ListItem::new(format!("{}{name}", prefix(i == app.time_control_selection)))
+            .style(list_style(i == app.time_control_selection))
+    }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Time Control")), area);
 }
 
 // ── Study Screens ──────────────────────────────────────────────────
