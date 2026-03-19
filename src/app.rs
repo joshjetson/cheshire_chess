@@ -9,6 +9,7 @@ use crate::canvas::{CanvasMode, CanvasState, CustomPieces, PIECE_TYPES, SHAPE_PA
 use crate::net::NetClient;
 use crate::protocol::*;
 use crate::lessons::STUDY_CATEGORIES;
+use crate::minigames::{KnightTour, ColorQuiz, MINIGAME_LIST};
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
 use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 use crate::identity;
@@ -33,6 +34,9 @@ pub enum Screen {
     StudyMenu,
     LessonList,
     LessonView,
+    MiniGameMenu,
+    KnightTourGame,
+    ColorQuizGame,
 }
 
 pub struct ChatState {
@@ -112,12 +116,17 @@ pub struct App {
     pub study_category: usize,
     pub study_lesson: usize,
     pub study_move: usize,
-    pub study_positions: Vec<Position>,  // cached positions at each move
+    pub study_positions: Vec<Position>,
+    // Mini-games
+    pub minigame_selection: usize,
+    pub knight_tour: Option<KnightTour>,
+    pub color_quiz: Option<ColorQuiz>,
 }
 
 const MENU_ITEMS: &[&str] = &[
     "Practice Tactics",
     "Study",
+    "Mini-Games",
     "View Starting Position",
     "Go Online",
     "Settings",
@@ -181,6 +190,9 @@ impl App {
             study_lesson: 0,
             study_move: 0,
             study_positions: Vec::new(),
+            minigame_selection: 0,
+            knight_tour: None,
+            color_quiz: None,
         }
     }
 
@@ -251,6 +263,9 @@ impl App {
             Screen::StudyMenu => format!("{focus_label} jk=navigate Enter=select Esc=back"),
             Screen::LessonList => format!("{focus_label} jk=navigate Enter=start Esc=back"),
             Screen::LessonView => format!("{focus_label} n/Space=next b/Bksp=back Esc=list"),
+            Screen::MiniGameMenu => format!("{focus_label} jk=navigate Enter=play Esc=back"),
+            Screen::KnightTourGame => format!("{focus_label} hjkl=move Enter=place knight b=undo Esc=quit"),
+            Screen::ColorQuizGame => format!("l=light d=dark Esc=quit"),
             Screen::Canvas => String::new(), // canvas has its own hints
         };
     }
@@ -571,6 +586,39 @@ impl App {
                     Screen::LiveGame => {
                         if self.is_my_turn() { self.handle_live_game_select(); }
                     }
+                    Screen::KnightTourGame => {
+                        let result = if let Some(ref mut tour) = self.knight_tour {
+                            let sq = self.cursor;
+                            if tour.try_move(sq) {
+                                self.board = tour.to_position();
+                                self.highlights = tour.visited_mask();
+                                let complete = tour.is_complete();
+                                let stuck = tour.is_stuck();
+                                let count = tour.visit_count;
+                                let moves = tour.move_history.len();
+                                Some((true, complete, stuck, count, moves))
+                            } else {
+                                Some((false, false, false, 0, 0))
+                            }
+                        } else { None };
+
+                        if let Some((moved, complete, stuck, count, moves)) = result {
+                            if moved {
+                                self.play_sound(|a, s| a.play_move(s));
+                                if complete {
+                                    self.play_sound(|a, s| a.play_session_complete(s));
+                                    self.message = format!("COMPLETE! All 64 squares in {moves} moves!");
+                                } else if stuck {
+                                    self.message = format!("Stuck at {count}/64! Press b to undo.");
+                                } else {
+                                    self.message = format!("Squares: {count}/64 — {} remaining", 64 - count);
+                                }
+                            } else {
+                                self.play_sound(|a, s| a.play_wrong(s));
+                                self.message = String::from("Can't move there — knight moves in L shape");
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -607,6 +655,14 @@ impl App {
             KeyCode::Char('b') | KeyCode::Backspace => {
                 if let Screen::LessonView = self.screen {
                     self.study_step_back();
+                }
+                if let Screen::KnightTourGame = self.screen {
+                    if let Some(ref mut tour) = self.knight_tour {
+                        tour.undo();
+                        self.board = tour.to_position();
+                        self.highlights = tour.visited_mask();
+                        self.message = format!("Squares: {}/64 — Undo!", tour.visit_count);
+                    }
                 }
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -651,6 +707,16 @@ impl App {
             Screen::StudyMenu => self.handle_study_menu_key(key),
             Screen::LessonList => self.handle_lesson_list_key(key),
             Screen::LessonView => self.handle_lesson_view_panel_key(key),
+            Screen::MiniGameMenu => self.handle_minigame_menu_key(key),
+            Screen::ColorQuizGame => self.handle_color_quiz_key(key),
+            Screen::KnightTourGame => {
+                // Panel Esc to quit
+                if key.code == KeyCode::Esc {
+                    self.knight_tour = None;
+                    self.screen = Screen::MiniGameMenu;
+                    self.message = String::from("Choose a mini-game");
+                }
+            }
             _ => {}
         }
     }
@@ -778,12 +844,18 @@ impl App {
                     self.message = String::from("Choose what to study");
                 }
                 2 => {
+                    self.minigame_selection = 0;
+                    self.screen = Screen::MiniGameMenu;
+                    self.focus = Focus::Panel;
+                    self.message = String::from("Choose a mini-game");
+                }
+                3 => {
                     self.board = Position::start();
                     self.selected_sq = None;
                     self.highlights.clear();
                     self.message = String::from("Move pieces freely. Tab=menu, Enter=select/place.");
                 }
-                3 => {
+                4 => {
                     // Go Online — connect to central game server
                     if self.net.is_some() {
                         self.send_net(ClientMsg::ListRooms);
@@ -804,12 +876,12 @@ impl App {
                         }
                     }
                 }
-                4 => {
+                5 => {
                     self.settings_selection = 0;
                     self.screen = Screen::Settings;
                     self.message = String::from("Settings");
                 }
-                5 => { self.running = false; }
+                6 => { self.running = false; }
                 _ => {}
         }
     }
@@ -1098,6 +1170,86 @@ impl App {
             let us_color = self.board.side_to_move;
             if let Some((_, color)) = self.board.piece_at(sq) {
                 if color == us_color { self.select_piece(sq); }
+            }
+        }
+    }
+
+    // ── Mini-Games ─────────────────────────────────────────────────
+
+    fn handle_minigame_menu_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.minigame_selection > 0 { self.minigame_selection -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.minigame_selection < MINIGAME_LIST.len() - 1 { self.minigame_selection += 1; }
+            }
+            KeyCode::Enter => {
+                match self.minigame_selection {
+                    0 => {
+                        // Knight's Tour
+                        let tour = KnightTour::new(0); // start at a1
+                        self.board = tour.to_position();
+                        self.highlights = tour.visited_mask();
+                        self.cursor = 0;
+                        self.knight_tour = Some(tour);
+                        self.screen = Screen::KnightTourGame;
+                        self.focus = Focus::Board;
+                        self.message = String::from("Knight's Tour! Visit all 64 squares. Enter=move b=undo");
+                    }
+                    1 => {
+                        // Color Quiz
+                        self.color_quiz = Some(ColorQuiz::new());
+                        self.screen = Screen::ColorQuizGame;
+                        self.focus = Focus::Panel;
+                        let sq_name = self.color_quiz.as_ref().unwrap().square_name();
+                        self.message = format!("Is {sq_name} LIGHT or DARK? Press l=light d=dark");
+                    }
+                    2 => {
+                        // Blindfold — just toggle piece visibility on the main board
+                        self.message = String::from("Blindfold mode coming soon!");
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::Menu;
+                self.update_hint();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_color_quiz_key(&mut self, key: KeyEvent) {
+        let guess = match key.code {
+            KeyCode::Char('l') | KeyCode::Char('L') => Some(true),
+            KeyCode::Char('d') | KeyCode::Char('D') => Some(false),
+            KeyCode::Esc => {
+                self.color_quiz = None;
+                self.screen = Screen::MiniGameMenu;
+                self.message = String::from("Choose a mini-game");
+                return;
+            }
+            _ => None,
+        };
+
+        if let Some(light) = guess {
+            let result = if let Some(ref mut quiz) = self.color_quiz {
+                let was_light = quiz.is_light();
+                let correct = quiz.guess(light);
+                let sq_name = quiz.square_name();
+                Some((correct, was_light, quiz.score, quiz.total, quiz.streak, sq_name))
+            } else { None };
+
+            if let Some((correct, was_light, score, total, streak, sq_name)) = result {
+                if correct {
+                    self.play_sound(|a, s| a.play_correct(s));
+                    self.message = format!("Correct! {score}/{total} Streak: {streak} — Is {sq_name} light or dark?");
+                } else {
+                    self.play_sound(|a, s| a.play_wrong(s));
+                    let was = if was_light { "light" } else { "dark" };
+                    self.message = format!("Wrong! It was {was}. {score}/{total} — Is {sq_name} light or dark?");
+                }
             }
         }
     }

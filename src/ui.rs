@@ -8,6 +8,7 @@ use crate::app::{App, Screen};
 use crate::board;
 use crate::canvas::{CanvasMode, PIECE_TYPES, SHAPE_PALETTE};
 use crate::lessons::STUDY_CATEGORIES;
+use crate::minigames::MINIGAME_LIST;
 use crate::settings::{SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 
 // Cheshire Cat purple theme
@@ -140,6 +141,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::StudyMenu => draw_right_study_menu(frame, app, main[1]),
         Screen::LessonList => draw_right_lesson_list(frame, app, main[1]),
         Screen::LessonView => draw_right_lesson_view(frame, app, main[1]),
+        Screen::MiniGameMenu => draw_right_minigame_menu(frame, app, main[1]),
+        Screen::KnightTourGame => draw_right_knight_tour(frame, app, main[1]),
+        Screen::ColorQuizGame => draw_right_color_quiz(frame, app, main[1]),
         Screen::Canvas => {} // handled above
     }
 }
@@ -819,6 +823,59 @@ fn draw_right_lesson_view(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(text)
             .style(Style::default().fg(Color::Rgb(200, 180, 220)))
             .block(Block::default().borders(Borders::ALL).title("Lesson")),
+        area,
+    );
+}
+
+// ── Mini-Game Screens ──────────────────────────────────────────────
+
+fn draw_right_minigame_menu(frame: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = MINIGAME_LIST.iter().enumerate().map(|(i, &(name, desc))| {
+        ListItem::new(format!("{}{name}\n      {desc}", prefix(i == app.minigame_selection)))
+            .style(list_style(i == app.minigame_selection))
+    }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Mini-Games")), area);
+}
+
+fn draw_right_knight_tour(frame: &mut Frame, app: &App, area: Rect) {
+    let mut text = String::from("  Knight's Tour\n\n");
+    if let Some(ref tour) = app.knight_tour {
+        text.push_str(&format!("  Squares: {}/64\n", tour.visit_count));
+        text.push_str(&format!("  Moves:   {}\n\n", tour.move_history.len() - 1));
+
+        let legal = tour.legal_moves();
+        text.push_str(&format!("  Available: {}\n", legal.len()));
+
+        if tour.is_complete() {
+            text.push_str("\n  COMPLETE!\n  All 64 squares visited!\n");
+        } else if tour.is_stuck() {
+            text.push_str("\n  STUCK! No valid moves.\n  Press b to undo.\n");
+        }
+
+        text.push_str("\n  Enter=move knight\n  b=undo last move\n  Esc=quit");
+    }
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(Color::Rgb(200, 180, 220)))
+            .block(Block::default().borders(Borders::ALL).title("Knight's Tour")),
+        area,
+    );
+}
+
+fn draw_right_color_quiz(frame: &mut Frame, app: &App, area: Rect) {
+    let mut text = String::from("  Color Quiz\n\n");
+    if let Some(ref quiz) = app.color_quiz {
+        let sq = quiz.square_name();
+        text.push_str(&format!("  What color is\n\n"));
+        text.push_str(&format!("       {sq}\n\n"));
+        text.push_str(&format!("  l = Light\n  d = Dark\n\n"));
+        text.push_str(&format!("  Score:  {}/{}\n", quiz.score, quiz.total));
+        text.push_str(&format!("  Streak: {}\n", quiz.streak));
+        text.push_str(&format!("  Best:   {}\n", quiz.best_streak));
+        text.push_str(&format!("\n  Esc=quit"));
+    }
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().fg(Color::Rgb(200, 180, 220)))
+            .block(Block::default().borders(Borders::ALL).title("Color Quiz")),
         area,
     );
 }

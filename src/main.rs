@@ -4,6 +4,7 @@ mod board;
 mod canvas;
 mod identity;
 mod lessons;
+mod minigames;
 mod net;
 mod progress;
 mod protocol;
