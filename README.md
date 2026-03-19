@@ -1,6 +1,6 @@
 # Cheshire Chess
 
-A chess application that lives in your terminal. Practice tactics, play live games, and hang out in game rooms — all from the command line. No browser, no GUI, no Electron. Works over SSH.
+A chess application that lives in your terminal. Play against 10 computer personalities, solve 5.8M puzzles, study 62 interactive lessons, compete online in game rooms, and train with mini-games — all from the command line. No browser, no GUI, no Electron. Works over SSH.
 
 ```
     +---+---+---+---+---+---+---+---+
@@ -28,14 +28,12 @@ A chess application that lives in your terminal. Practice tactics, play live gam
 
 ## Install
 
-### From crates.io
-
 ```bash
 cargo install cheshire_chess
 cheshire-chess
 ```
 
-### From source
+Or build from source:
 
 ```bash
 git clone https://github.com/joshjetson/cheshire_chess.git
@@ -44,160 +42,117 @@ cargo build --release
 ./target/release/cheshire-chess
 ```
 
-Requires Rust 1.75 or newer.
+Requires Rust 1.75+. Linux audio needs `libasound2-dev` (`apt install pkg-config libasound2-dev`). Install without audio: `cargo install cheshire_chess --no-default-features`. macOS and Windows work out of the box.
 
-### Linux audio dependencies
+## Features
 
-Audio requires ALSA development libraries on Linux:
+### Play vs Computer — 10 Personalities
 
-```bash
-# Debian/Ubuntu
-sudo apt install pkg-config libasound2-dev
+Play against a built-in chess engine with adjustable strength and famous player styles:
 
-# Fedora
-sudo dnf install alsa-lib-devel
+| Personality | Style |
+|---|---|
+| Beginner | Just learning, makes random mistakes |
+| Casual | Plays for fun, occasional blunders |
+| Club Player | Solid fundamentals |
+| Strong Player | Finds tactical shots |
+| Expert | Tournament strength, deep calculation |
+| Bobby Fischer | Aggressive, precise, no mercy |
+| Mikhail Tal | Wild sacrifices, chaotic attacks |
+| Anatoly Karpov | Positional squeeze, quiet suffocation |
+| Garry Kasparov | Dynamic, calculating, overwhelming force |
+| Magnus Carlsen | Universal, patient, grinds you down |
 
-# Arch
-sudo pacman -S alsa-lib
-```
+The engine uses minimax with alpha-beta pruning, piece-square tables, and personality-specific evaluation weights. Each opponent has unique aggression, depth, and randomness settings.
 
-To install without audio (no system deps needed):
+### Tactics Training — 5.8 Million Puzzles
 
-```bash
-cargo install cheshire_chess --no-default-features
-```
+Pick from 27 tactic themes — fork, pin, skewer, discovered attack, mate in 1/2/3, back rank mate, smothered mate, and more. Puzzles are served from a central server — no download needed. Select a piece, see legal moves highlighted, play the solution.
 
-macOS and Windows work out of the box — no extra dependencies.
+### Study — 62 Interactive Lessons
 
-### Puzzles (optional)
+Walk through annotated games and positions move by move:
 
-Download the Lichess puzzle database for tactics training (~300MB download, ~1GB uncompressed):
+**Famous Games** — The Immortal Game, Opera Game, Game of the Century, Deep Blue vs Kasparov, Fischer vs Spassky Game 6, Kasparov's Immortal, Fool's Mate, Scholar's Mate
 
-```bash
-mkdir -p data
-curl -L -o data/lichess_db_puzzle.csv.zst https://database.lichess.org/lichess_db_puzzle.csv.zst
-zstd -d data/lichess_db_puzzle.csv.zst -o data/lichess_puzzles.csv
-rm data/lichess_db_puzzle.csv.zst
-```
+**Openings (19)** — Italian, Sicilian, French, Queen's Gambit, Ruy Lopez, King's Indian, Caro-Kann, London, English, Scotch, King's Gambit, Scandinavian, Nimzo-Indian, Grünfeld, Slav, Petroff, Dutch, Pirc, Vienna
 
-Place the `data/` directory wherever you run the app from.
+**Tactical Patterns** — Fork, Pin, Skewer, Discovered Attack, Deflection, Removing the Defender, Double Check, Overloading
+
+**Checkmate Patterns** — Back Rank Mate, Smothered Mate, Arabian Mate, Anastasia's Mate, Boden's Mate, Epaulette Mate, Ladder Mate
+
+**Endgame Theory** — K+Q vs K, K+R vs K, Opposition, Lucena Position, Philidor Position, Rule of the Square, Triangulation, Passed Pawns, Two Bishops Mate
+
+**Pawn Structures** — Isolated Queen Pawn, Doubled Pawns, Passed Pawns, Backward Pawns, Pawn Chains, Pawn Majority
+
+### Mini-Games
+
+- **Knight's Tour** — move a knight to visit all 64 squares. Tests visualization and planning.
+- **Color Quiz** — flash a square name, answer light or dark. Builds instant board awareness. Tracks score, streak, and best streak.
+- **Blindfold Mode** — coming soon.
+
+### Live Multiplayer
+
+Select **Go Online** to connect to the central game server. No ports to open, no setup.
+
+- **Game Rooms** — create or join rooms. Name your room. See who's online.
+- **Game Tables** — sit down at a table, another player joins, game starts automatically. Spectators can watch.
+- **Room Chat** — everyone shares one chat. Talk to players and spectators.
+- **Rematch** — after a game, press `r` to rematch with swapped colors.
+
+### Synthesized Audio
+
+All sounds are generated mathematically — no audio files. Warm, filtered tones for every event:
+
+- Piece move, capture, check, checkmate
+- Correct/wrong puzzle answers, hints
+- Login/exit sounds
+
+Every sound is fully customizable in **Settings > Sound Settings**: waveform (sine/triangle/saw/square), ADSR envelope, LFO modulation, low-pass filter cutoff. Preview and save.
+
+### Custom Pieces
+
+Draw your own chess pieces with a built-in canvas editor using 200+ Unicode block characters. Or edit `data/custom_pieces.txt` directly. Pieces persist across sessions.
 
 ### Controls
 
-The screen is split: board on the left, context panel on the right. **Tab** switches which side has focus. The status bar always shows available controls.
+Board always on the left, context panel on the right. **Tab** switches focus.
 
 | Key | Action |
 |---|---|
 | `Tab` | Switch focus between board and panel |
 | `hjkl` / arrows | Navigate within the focused pane |
-| `Enter` | Select / activate (always) |
-| `Esc` | Deselect / go back (always) |
+| `Enter` | Select / activate |
+| `Esc` | Deselect / go back |
 | `Ctrl+C` | Quit from anywhere |
-| `q` | Quit (from main menu) |
-
-**Board focused** — arrow keys move the cursor, Enter selects a piece then places it. On the main screen, pieces move freely (no rules). In puzzles and live games, moves are validated.
-
-**Panel focused** — arrow keys navigate menu items/lists, Enter activates the selection.
-
-## What It Does
-
-- **5.8 million puzzles** from the Lichess database — forks, pins, skewers, mates, and more
-- **Live multiplayer** — create game rooms, play opponents, spectate, and chat
-- **Peer-to-peer** — every client is also a server. No central game server required
-- **Internet discovery** — players find each other automatically through a tracker service
-- **Synthesized audio** — all sounds generated mathematically at runtime, fully customizable
-- **Sound designer** — tweak waveform, ADSR envelope, LFO, and filter per sound event
-- **Custom pieces** — draw your own piece art with a built-in canvas editor
-- **Settings** — player name, sound parameters, and piece canvas all in one place
-- **Runs anywhere** — pure terminal UI, works in any terminal emulator, over SSH, on any OS
-
-## Features
-
-### Tactics Training
-
-Pick a tactic theme from 27 categories — fork, pin, skewer, mate in 1/2/3, back rank mate, smothered mate, and more. Each puzzle tells you which color to play. Select a piece, see its legal moves highlighted, and play the solution.
-
-Correct moves advance the puzzle. Wrong moves let you try again. `H` gives a hint. Puzzles are loaded on demand from the 5.8M Lichess database — no wait time.
-
-### Live Multiplayer
-
-Select **Go Online** from the menu. Your app starts hosting automatically — no separate server to run.
-
-**Game Rooms** — browse existing rooms or create your own. Each room is a chess club:
-
-- **Game Tables** — anyone in the room can create a table. Another player joins to start a game. Spectators can watch any table.
-- **Room Chat** — everyone in the room shares one chat. Talk to players, spectators, whoever.
-- **Internet Discovery** — when you go online, your server registers with a tracker at `chess.virtualraremedia.com`. Other players see you in their room browser and can connect directly.
-
-```
-┌─ Josh's Room ──────────┐┌─ Chat ──────────────────┐
-│ > Table 1: josh vs     ││  josh created the room  │
-│   alex [playing]       ││  alex joined            │
-│   Table 2: (open) vs   ││  josh: ready?           │
-│   (open) [waiting]     ││  alex: let's go         │
-│                        ││                          │
-├─ 3 players ────────────┤│  > nice fork!_          │
-│   josh (you) [playing] ││                          │
-│   alex [playing]       │└──────────────────────────┘
-│   sam [watching]       │
-└────────────────────────┘
-```
-
-### Settings
-
-Access from the main menu. Includes:
-
-- **Player Name** — set your display name for online play
-- **Sound Settings** — per-event synth controls: waveform (sine/triangle/saw/square), ADSR envelope, LFO rate and depth, low-pass filter cutoff. Preview and save.
-- **Piece Canvas** — draw custom pieces (see below)
-
-All settings persist to `data/settings.json`.
-
-### Custom Pieces
-
-Draw your own chess pieces using Unicode block characters. Open from **Settings > Piece Canvas**:
-
-1. Pick a piece type (King, Queen, Rook, Bishop, Knight, Pawn)
-2. Choose from 200+ shapes — block elements, box drawing, geometric shapes, symbols
-3. Draw on a 7x3 grid with live preview
-4. Save — pieces persist in `data/custom_pieces.txt` and load automatically
-
-You can also edit `data/custom_pieces.txt` directly:
-
-```
-# King
-5
- ▕▟✚▙▏
-  ▀▀▀
-```
-
-Spaces are transparent. Everything else renders in the piece color.
-
-### Board Theme
-
-Cheshire Cat purple — soft lavender light squares, deep purple dark squares, pink cursor highlight.
 
 ## Architecture
 
-- **Rust** with `ratatui` + `crossterm` for the terminal UI
-- **Bitboard** chess engine — 64-bit integers for position representation and move generation
-- **WebSocket** networking — every client embeds a server, games connect peer-to-peer
-- **Tracker** service at `chess.virtualraremedia.com` for internet player discovery
+- **Rust** — ratatui + crossterm for the terminal UI
+- **Bitboard engine** — 64-bit position representation, alpha-beta search with piece-square tables
+- **WebSocket networking** — central game server via WSS through Caddy
+- **Synthesized audio** — runtime-generated sounds with ADSR, LFO, and filtering
+- **Server-side puzzles** — 5.8M Lichess puzzles served from `chess.virtualraremedia.com`
 
 ```
 src/
 ├── main.rs        — event loop, terminal setup
 ├── app.rs         — state machine, screen/key handling
 ├── board.rs       — bitboard position, FEN, move gen, check/mate
+├── engine.rs      — chess AI: minimax, alpha-beta, personalities
 ├── ui.rs          — ratatui rendering for all screens
-├── puzzle.rs      — Lichess CSV indexing, on-demand loading
-├── canvas.rs      — piece editor, shape palette, save/load
+├── lessons.rs     — 62 study lessons baked into the binary
+├── minigames.rs   — knight's tour, color quiz, blindfold
+├── puzzle.rs      — Lichess puzzle indexing and on-demand loading
 ├── audio.rs       — synthesized sound engine, ADSR, LFO, filter
-├── settings.rs    — persistent settings, synth params, save/load
+├── settings.rs    — persistent settings and synth params
+├── canvas.rs      — piece editor, shape palette, save/load
 ├── server.rs      — embedded WebSocket game server
 ├── net.rs         — client networking, channel bridge
 ├── protocol.rs    — JSON message types (client <-> server)
-└── tracker.rs     — tracker client for discovery
+├── tracker.rs     — tracker client for server discovery
+├── identity.rs    — client identity hash generation
+└── progress.rs    — puzzle completion tracking
 ```
 
 ## License

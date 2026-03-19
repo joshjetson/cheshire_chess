@@ -1,8 +1,8 @@
 [package]
 name = "cheshire_chess"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2021"
-description = "A terminal chess app — tactics training, live multiplayer, game rooms, and custom pieces"
+description = "Terminal chess — play 10 AI personalities, 5.8M puzzles, 62 study lessons, live multiplayer, mini-games"
 license = "MIT"
 repository = "https://github.com/joshjetson/cheshire_chess"
 homepage = "https://github.com/joshjetson/cheshire_chess"
