@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget};
 use crate::app::{App, Screen};
 use crate::board;
 use crate::canvas::{CanvasMode, PIECE_TYPES, SHAPE_PALETTE};
+use crate::lessons::STUDY_CATEGORIES;
 use crate::settings::{SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 
 // Cheshire Cat purple theme
@@ -136,6 +137,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::SoundSettings => draw_right_sound_settings(frame, app, main[1]),
         Screen::SoundEventEdit => draw_right_sound_event_edit(frame, app, main[1]),
         Screen::NameEdit => draw_right_name_edit(frame, app, main[1]),
+        Screen::StudyMenu => draw_right_study_menu(frame, app, main[1]),
+        Screen::LessonList => draw_right_lesson_list(frame, app, main[1]),
+        Screen::LessonView => draw_right_lesson_view(frame, app, main[1]),
         Screen::Canvas => {} // handled above
     }
 }
@@ -757,4 +761,64 @@ fn draw_right_sound_event_edit(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_right_room_name_input(frame: &mut Frame, app: &App, area: Rect) {
     let text = format!("\n  Room Name:\n\n  > {}_\n\n  Enter=create Esc=cancel", app.room_name_input);
     frame.render_widget(Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("New Room")), area);
+}
+
+// ── Study Screens ──────────────────────────────────────────────────
+
+fn draw_right_study_menu(frame: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = STUDY_CATEGORIES.iter().enumerate().map(|(i, cat)| {
+        let count = cat.lessons.len();
+        ListItem::new(format!("{}{} ({count} lessons)", prefix(i == app.study_category), cat.name))
+            .style(list_style(i == app.study_category))
+    }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title("Study")), area);
+}
+
+fn draw_right_lesson_list(frame: &mut Frame, app: &App, area: Rect) {
+    let category = &STUDY_CATEGORIES[app.study_category];
+    let items: Vec<ListItem> = category.lessons.iter().enumerate().map(|(i, lesson)| {
+        ListItem::new(format!("{}{}\n      {}", prefix(i == app.study_lesson), lesson.title, lesson.subtitle))
+            .style(list_style(i == app.study_lesson))
+    }).collect();
+    frame.render_widget(List::new(items).block(Block::default().borders(Borders::ALL).title(category.name)), area);
+}
+
+fn draw_right_lesson_view(frame: &mut Frame, app: &App, area: Rect) {
+    let category = &STUDY_CATEGORIES[app.study_category];
+    let lesson = &category.lessons[app.study_lesson];
+    let total = lesson.moves.len();
+    let current = app.study_move;
+
+    let mut text = format!("  {}\n  {}\n", lesson.title, lesson.subtitle);
+    text.push_str(&format!("\n  Move {current}/{total}\n"));
+
+    // Show the last few moves with commentary
+    let start = if current > 3 { current - 3 } else { 0 };
+    for i in start..=current.min(total) {
+        if i == 0 {
+            text.push_str("\n  Start position\n");
+        } else if i <= total {
+            let (uci, comment) = lesson.moves[i - 1];
+            let move_num = (i + 1) / 2;
+            let dot = if i % 2 == 1 { format!("{move_num}.") } else { format!("{move_num}...") };
+            let marker = if i == current { " >> " } else { "    " };
+            text.push_str(&format!("{marker}{dot} {uci}\n"));
+            if i == current && !comment.is_empty() {
+                text.push_str(&format!("    {comment}\n"));
+            }
+        }
+    }
+
+    if current >= total {
+        text.push_str("\n  End of lesson.\n");
+    }
+
+    text.push_str("\n  n/Space=next  b/Bksp=back  Esc=list");
+
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(Style::default().fg(Color::Rgb(200, 180, 220)))
+            .block(Block::default().borders(Borders::ALL).title("Lesson")),
+        area,
+    );
 }

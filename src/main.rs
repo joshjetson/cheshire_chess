@@ -3,6 +3,7 @@ mod audio;
 mod board;
 mod canvas;
 mod identity;
+mod lessons;
 mod net;
 mod progress;
 mod protocol;

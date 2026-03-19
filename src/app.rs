@@ -8,6 +8,7 @@ use crate::board::{Move, Position};
 use crate::canvas::{CanvasMode, CanvasState, CustomPieces, PIECE_TYPES, SHAPE_PALETTE};
 use crate::net::NetClient;
 use crate::protocol::*;
+use crate::lessons::STUDY_CATEGORIES;
 use crate::puzzle::{Puzzle, PuzzleIndex, TACTIC_THEMES};
 use crate::settings::{Settings, SETTINGS_ITEMS, SOUND_EVENT_NAMES, SYNTH_PARAM_NAMES};
 use crate::identity;
@@ -29,6 +30,9 @@ pub enum Screen {
     SoundEventEdit,
     NameEdit,
     RoomNameInput,
+    StudyMenu,
+    LessonList,
+    LessonView,
 }
 
 pub struct ChatState {
@@ -104,10 +108,16 @@ pub struct App {
     pub name_input: String,
     pub room_name_input: String,
     pub client_id: String,
+    // Study
+    pub study_category: usize,
+    pub study_lesson: usize,
+    pub study_move: usize,
+    pub study_positions: Vec<Position>,  // cached positions at each move
 }
 
 const MENU_ITEMS: &[&str] = &[
     "Practice Tactics",
+    "Study",
     "View Starting Position",
     "Go Online",
     "Settings",
@@ -167,6 +177,10 @@ impl App {
             name_input: String::new(),
             room_name_input: String::new(),
             client_id: identity::get_or_create_client_id(data_dir),
+            study_category: 0,
+            study_lesson: 0,
+            study_move: 0,
+            study_positions: Vec::new(),
         }
     }
 
@@ -234,6 +248,9 @@ impl App {
             Screen::SoundEventEdit => format!("{focus_label} jk=param hl=adjust p=preview s=save Esc=back"),
             Screen::NameEdit => format!("Type name, Enter=save, Esc=cancel"),
             Screen::RoomNameInput => format!("Type room name, Enter=create, Esc=cancel"),
+            Screen::StudyMenu => format!("{focus_label} jk=navigate Enter=select Esc=back"),
+            Screen::LessonList => format!("{focus_label} jk=navigate Enter=start Esc=back"),
+            Screen::LessonView => format!("{focus_label} n/Space=next b/Bksp=back Esc=list"),
             Screen::Canvas => String::new(), // canvas has its own hints
         };
     }
@@ -563,7 +580,11 @@ impl App {
                 self.update_hint();
             }
             // Screen-specific shortcuts that work from board focus
-            KeyCode::Char('n') | KeyCode::Char('N') => {
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char(' ') => {
+                if let Screen::LessonView = self.screen {
+                    self.study_step_forward();
+                    return;
+                }
                 if let Screen::Puzzle = self.screen {
                     self.score_total += 1;
                     self.advance_puzzle();
@@ -581,6 +602,11 @@ impl App {
                             self.play_sound(|a, s| a.play_hint(s));
                         }
                     }
+                }
+            }
+            KeyCode::Char('b') | KeyCode::Backspace => {
+                if let Screen::LessonView = self.screen {
+                    self.study_step_back();
                 }
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -622,6 +648,9 @@ impl App {
             Screen::Settings => self.handle_settings_key(key),
             Screen::SoundSettings => self.handle_sound_settings_key(key),
             Screen::SoundEventEdit => self.handle_sound_event_edit_key(key),
+            Screen::StudyMenu => self.handle_study_menu_key(key),
+            Screen::LessonList => self.handle_lesson_list_key(key),
+            Screen::LessonView => self.handle_lesson_view_panel_key(key),
             _ => {}
         }
     }
@@ -743,12 +772,18 @@ impl App {
                     self.message = String::from("Pick a tactic theme");
                 }
                 1 => {
+                    self.study_category = 0;
+                    self.screen = Screen::StudyMenu;
+                    self.focus = Focus::Panel;
+                    self.message = String::from("Choose what to study");
+                }
+                2 => {
                     self.board = Position::start();
                     self.selected_sq = None;
                     self.highlights.clear();
                     self.message = String::from("Move pieces freely. Tab=menu, Enter=select/place.");
                 }
-                2 => {
+                3 => {
                     // Go Online — connect to central game server
                     if self.net.is_some() {
                         self.send_net(ClientMsg::ListRooms);
@@ -769,12 +804,12 @@ impl App {
                         }
                     }
                 }
-                3 => {
+                4 => {
                     self.settings_selection = 0;
                     self.screen = Screen::Settings;
                     self.message = String::from("Settings");
                 }
-                4 => { self.running = false; }
+                5 => { self.running = false; }
                 _ => {}
         }
     }
@@ -1064,6 +1099,109 @@ impl App {
             if let Some((_, color)) = self.board.piece_at(sq) {
                 if color == us_color { self.select_piece(sq); }
             }
+        }
+    }
+
+    // ── Study ──────────────────────────────────────────────────────
+
+    fn handle_study_menu_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.study_category > 0 { self.study_category -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.study_category < STUDY_CATEGORIES.len() - 1 { self.study_category += 1; }
+            }
+            KeyCode::Enter => {
+                self.study_lesson = 0;
+                self.screen = Screen::LessonList;
+                self.message = String::from("Select a lesson");
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::Menu;
+                self.update_hint();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_lesson_list_key(&mut self, key: KeyEvent) {
+        let category = &STUDY_CATEGORIES[self.study_category];
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.study_lesson > 0 { self.study_lesson -= 1; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.study_lesson < category.lessons.len() - 1 { self.study_lesson += 1; }
+            }
+            KeyCode::Enter => {
+                self.start_lesson();
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::StudyMenu;
+                self.message = String::from("Choose what to study");
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_lesson_view_panel_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('n') | KeyCode::Char(' ') => {
+                self.study_step_forward();
+            }
+            KeyCode::Char('b') | KeyCode::Backspace => {
+                self.study_step_back();
+            }
+            KeyCode::Esc => {
+                self.screen = Screen::LessonList;
+                self.message = String::from("Select a lesson");
+            }
+            _ => {}
+        }
+    }
+
+    fn start_lesson(&mut self) {
+        let category = &STUDY_CATEGORIES[self.study_category];
+        let lesson = &category.lessons[self.study_lesson];
+
+        // Build all positions by replaying moves
+        let mut pos = Position::from_fen(lesson.fen).unwrap_or_else(Position::start);
+        let mut positions = vec![pos.clone()];
+
+        for &(uci, _) in lesson.moves {
+            if let Some(mv) = crate::board::Move::from_uci(uci) {
+                pos = pos.make_move(mv);
+                positions.push(pos.clone());
+            }
+        }
+
+        self.study_positions = positions;
+        self.study_move = 0;
+        self.board = self.study_positions[0].clone();
+        self.screen = Screen::LessonView;
+        self.focus = Focus::Panel;
+
+        self.message = format!("{} — n=next b=back Esc=list", lesson.title);
+    }
+
+    fn study_step_forward(&mut self) {
+        let category = &STUDY_CATEGORIES[self.study_category];
+        let lesson = &category.lessons[self.study_lesson];
+
+        if self.study_move < lesson.moves.len() {
+            self.study_move += 1;
+            if self.study_move < self.study_positions.len() {
+                self.board = self.study_positions[self.study_move].clone();
+                self.play_sound(|a, s| a.play_move(s));
+            }
+        }
+    }
+
+    fn study_step_back(&mut self) {
+        if self.study_move > 0 {
+            self.study_move -= 1;
+            self.board = self.study_positions[self.study_move].clone();
         }
     }
 
