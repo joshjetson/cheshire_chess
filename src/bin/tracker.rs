@@ -205,6 +205,9 @@ async fn main() {
                     state.lock().await.servers.remove(&key);
                 }
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
+            } else if first_line.starts_with("GET /version") {
+                let version = env!("CARGO_PKG_VERSION");
+                let _ = stream.write_all(respond_json(&format!("\"{version}\"")).as_bytes()).await;
             } else {
                 let _ = stream.write_all(respond_error(404, "not found").as_bytes()).await;
             }

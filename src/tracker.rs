@@ -166,6 +166,21 @@ pub fn fetch_themes(client_id: &str) -> Vec<(String, String, usize)> {
 }
 
 /// Start a background heartbeat thread that re-registers every 30 seconds.
+/// Check if a newer version is available. Returns Some(latest_version) if update available.
+pub fn check_update() -> Option<String> {
+    let mut stream = connect_tracker()?;
+    let request = format!(
+        "GET /version HTTP/1.1\r\nHost: {TRACKER_HOST}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    let body = response.split("\r\n\r\n").nth(1)?;
+    let latest: String = serde_json::from_str(body).ok()?;
+    let current = env!("CARGO_PKG_VERSION");
+    if latest != current { Some(latest) } else { None }
+}
+
 pub fn start_heartbeat(host: String, port: u16, name: String) -> mpsc::Sender<u32> {
     let (tx, rx) = mpsc::channel::<u32>();
 

@@ -108,6 +108,7 @@ pub struct App {
     pub black_time_ms: u64,
     pub time_control: TimeControl,
     pub time_control_selection: usize,
+    pub clock_tick: std::time::Instant,  // last time we ticked the display clock
     // Discovery (reserved for future LAN mode)
     #[allow(dead_code)]
     pub remote_servers: Vec<RemoteServer>,
@@ -200,6 +201,7 @@ impl App {
             black_time_ms: 0,
             time_control: TimeControl::None,
             time_control_selection: 0,
+            clock_tick: std::time::Instant::now(),
             remote_servers: Vec::new(),
             heartbeat_tx: None,
             public_ip: None,
@@ -316,6 +318,25 @@ impl App {
     pub fn play_sound(&self, f: impl FnOnce(&Audio, &crate::settings::SoundSettings)) {
         if let Some(ref audio) = self.audio {
             f(audio, &self.settings.sound);
+        }
+    }
+
+    /// Tick the display clock down for the active player. Call every loop iteration.
+    pub fn tick_clock(&mut self) {
+        if !self.game_active || self.time_control == TimeControl::None {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.clock_tick).as_millis() as u64;
+        self.clock_tick = now;
+
+        match self.board.side_to_move {
+            crate::board::Color::White => {
+                self.white_time_ms = self.white_time_ms.saturating_sub(elapsed);
+            }
+            crate::board::Color::Black => {
+                self.black_time_ms = self.black_time_ms.saturating_sub(elapsed);
+            }
         }
     }
 
@@ -440,6 +461,7 @@ impl App {
                 };
                 self.white_time_ms = initial;
                 self.black_time_ms = initial;
+                self.clock_tick = std::time::Instant::now();
                 if let Some(pos) = Position::from_fen(&fen) {
                     self.board = pos;
                 }
@@ -477,6 +499,7 @@ impl App {
                     self.move_history.push(uci);
                     self.white_time_ms = white_time_ms;
                     self.black_time_ms = black_time_ms;
+                    self.clock_tick = std::time::Instant::now();
 
                     if let Some(pos) = Position::from_fen(&fen) {
                         let is_check = pos.in_check(pos.side_to_move);

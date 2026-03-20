@@ -1,6 +1,6 @@
 [package]
 name = "cheshire_chess"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Terminal chess — play 10 AI personalities, 5.8M puzzles, 62 study lessons, live multiplayer, mini-games"
 license = "MIT"

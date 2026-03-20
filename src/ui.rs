@@ -650,13 +650,28 @@ fn draw_right_room_lobby(frame: &mut Frame, app: &App, area: Rect) {
     draw_chat_pane(frame, app, split[2]);
 }
 
+fn captured_pieces(pos: &board::Position, color: board::Color) -> String {
+    let ci = if color == board::Color::White { board::WHITE } else { board::BLACK };
+    let starting = [
+        (board::QUEEN, 1, "Q"), (board::ROOK, 2, "R"), (board::BISHOP, 2, "B"),
+        (board::KNIGHT, 2, "N"), (board::PAWN, 8, "P"),
+    ];
+    let mut caps = Vec::new();
+    for &(pt, start, name) in &starting {
+        let current = (pos.pieces[pt] & pos.colors[ci]).count_ones() as usize;
+        for _ in current..start {
+            caps.push(name);
+        }
+    }
+    if caps.is_empty() { String::from("-") } else { caps.join(" ") }
+}
+
 fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
     let split = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(4), Constraint::Min(0)])
+        .constraints([Constraint::Length(11), Constraint::Min(4), Constraint::Min(0)])
         .split(area);
 
-    // Game info panel
     let my_id = app.my_id;
     let is_white = app.live_white == my_id;
     let is_black = app.live_black == my_id;
@@ -683,7 +698,7 @@ fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
     let in_check = app.game_active && app.board.in_check(app.board.side_to_move);
     let check_str = if in_check { " CHECK!" } else { "" };
 
-    // Format clock times
+    // Clock
     let clock_str = if app.time_control != crate::protocol::TimeControl::None {
         let wm = app.white_time_ms / 60000;
         let ws = (app.white_time_ms % 60000) / 1000;
@@ -694,8 +709,13 @@ fn draw_right_live_game(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    // Captured pieces
+    // captured_pieces(White) = white pieces missing = what Black captured
+    let black_missing = captured_pieces(&app.board, board::Color::Black);
+    let white_missing = captured_pieces(&app.board, board::Color::White);
+
     let info_text = format!(
-        "\n  You: {my_role}  Turn: {turn}{check_str}{clock_str}\n  {status}\n\n  Tab=chat r=resign Esc=leave"
+        "\n  You: {my_role}  Turn: {turn}{check_str}{clock_str}\n  {status}\n  W won: {black_missing}\n  B won: {white_missing}\n  Tab=chat r=resign Esc=leave"
     );
 
     let info_style = if your_turn {
@@ -935,6 +955,9 @@ fn draw_right_computer_game(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             text.push_str("  Waiting...\n");
         }
+        let b_missing = captured_pieces(&app.board, board::Color::Black);
+        let w_missing = captured_pieces(&app.board, board::Color::White);
+        text.push_str(&format!("\n  W won: {b_missing}\n  B won: {w_missing}\n"));
     } else {
         text.push_str("  Game over.\n  Esc to return.\n");
     }

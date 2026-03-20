@@ -73,6 +73,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool)
     let mut app = App::new(data_dir);
     app.play_sound(|a, s| a.play_login(s));
 
+    // Check for updates (non-blocking — runs in background thread)
+    let update_msg = std::thread::spawn(|| tracker::check_update());
+
     let puzzle_path = Path::new("data/lichess_puzzles.csv");
     if puzzle_path.exists() {
         match app.build_index(puzzle_path) {
@@ -85,10 +88,16 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, quit: &AtomicBool)
         }
     }
 
+    // Show update notice if available
+    if let Ok(Some(latest)) = update_msg.join() {
+        app.message = format!("Update available: v{latest} — cargo install cheshire_chess");
+    }
+
     while app.running && !quit.load(Ordering::Relaxed) {
         terminal.draw(|frame| ui::draw(frame, &app))?;
 
         app.poll_network();
+        app.tick_clock();
         app.computer_think();
 
         if event::poll(Duration::from_millis(50))? {

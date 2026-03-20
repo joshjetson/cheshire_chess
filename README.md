@@ -2,6 +2,8 @@
 
 A chess application that lives in your terminal. Play against 10 computer personalities, solve 5.8M puzzles, study 62 interactive lessons, compete online in game rooms, and train with mini-games — all from the command line. No browser, no GUI, no Electron. Works over SSH.
 
+![Cheshire Chess](https://i.imgur.com/LAdmNdS.png)
+
 ```
     +---+---+---+---+---+---+---+---+
   8 | R | N | B | Q | K | B | N | R |       Pieces in-game:
