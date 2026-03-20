@@ -1068,11 +1068,29 @@ impl App {
     fn move_cursor(&mut self, key: KeyEvent) {
         let file = self.cursor % 8;
         let rank = self.cursor / 8;
+        // When board is flipped, visual directions are reversed
+        let (up, down, left, right) = if self.flipped {
+            (-8i8, 8i8, 1i8, -1i8)
+        } else {
+            (8, -8, -1, 1)
+        };
         match key.code {
-            KeyCode::Left | KeyCode::Char('h') => { if file > 0 { self.cursor -= 1; } }
-            KeyCode::Right | KeyCode::Char('l') => { if file < 7 { self.cursor += 1; } }
-            KeyCode::Up | KeyCode::Char('k') => { if rank < 7 { self.cursor += 8; } }
-            KeyCode::Down | KeyCode::Char('j') => { if rank > 0 { self.cursor -= 8; } }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let new_file = file as i8 + left;
+                if new_file >= 0 && new_file < 8 { self.cursor = (self.cursor as i8 + left) as u8; }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let new_file = file as i8 + right;
+                if new_file >= 0 && new_file < 8 { self.cursor = (self.cursor as i8 + right) as u8; }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let new_rank = rank as i8 + (up / up.abs());
+                if new_rank >= 0 && new_rank < 8 { self.cursor = (self.cursor as i8 + up) as u8; }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let new_rank = rank as i8 + (down / down.abs());
+                if new_rank >= 0 && new_rank < 8 { self.cursor = (self.cursor as i8 + down) as u8; }
+            }
             _ => {}
         }
     }
